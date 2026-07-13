@@ -180,6 +180,7 @@
   <section class="tab-panel" id="tab1"></section>
   <section class="tab-panel" id="tab2"></section>
   <section class="tab-panel" id="tab3"></section>
+  <section class="tab-panel" id="tab5"></section>
   <section class="tab-panel" id="tab4"></section>
 </main>
 
@@ -240,11 +241,34 @@ const BASE_TOTAL_LEADS=3192;
 const BASE_CLOSED_DEALS=17;
 const INDUSTRY_BENCHMARK=2.5; // % conversion
 
+// Source: Export.xlsx — "First Contacted" minus "Inquiry Date" (whole days, floored at 0) for
+// every lead. "Never contacted" = blank First Contacted. Sums/counts are stored raw so the
+// displayed averages match the workbook exactly. Buckets: 0–7, 8–14, 15–30, 31–60, 60+ days.
+const RESPONSE_BUCKETS=["0-7","8-14","15-30","31-60","60+"];
+const RESPONSE_BUCKET_LABELS={"0-7":"0–7 days","8-14":"8–14 days","15-30":"15–30 days","31-60":"31–60 days","60+":"60+ days","never":"Never contacted"};
+const RESPONSE_BUCKET_COLORS={"0-7":"#00e676","8-14":"#a3e635","15-30":"#ffb020","31-60":"#ff8c42","60+":"#ff5252","never":"#6a6a6a"};
+const BASE_RESPONSE={
+  total:3192, contactedCount:2582, contactedSum:15416, neverCount:610, within7Count:2450,
+  convContactedCount:14, convSum:10, deadContactedCount:1913, deadSum:2278, convTotal:17, deadTotal:2361,
+  dist:{"0-7":2450,"8-14":26,"15-30":15,"31-60":8,"60+":83,"never":610},
+  convByBucket:{"0-7":13,"8-14":1,"15-30":0,"31-60":0,"60+":0,"never":3},
+  bySource:{
+    "Website (Direct)":{leads:2535,contacted:2064,never:471,sumDays:8404},
+    "Web Form (Ninja)":{leads:514,contacted:430,never:84,sumDays:6723},
+    "Web Form (Other)":{leads:85,contacted:79,never:6,sumDays:29},
+    "LinkedIn / Paid Ads":{leads:31,contacted:2,never:29,sumDays:260},
+    "List Import":{leads:19,contacted:3,never:16,sumDays:0},
+    "Store Referral":{leads:8,contacted:4,never:4,sumDays:0}
+  },
+  monthly:{"2023-04":{total:123,contacted:4,never:119,sumDays:1316},"2023-05":{total:138,contacted:8,never:130,sumDays:494},"2023-06":{total:81,contacted:64,never:17,sumDays:24},"2023-07":{total:85,contacted:82,never:3,sumDays:22},"2023-08":{total:79,contacted:76,never:3,sumDays:0},"2023-09":{total:69,contacted:68,never:1,sumDays:0},"2023-10":{total:74,contacted:70,never:4,sumDays:0},"2023-11":{total:83,contacted:77,never:6,sumDays:0},"2023-12":{total:125,contacted:118,never:7,sumDays:0},"2024-01":{total:254,contacted:241,never:13,sumDays:0},"2024-02":{total:187,contacted:173,never:14,sumDays:1},"2024-03":{total:177,contacted:160,never:17,sumDays:0},"2024-04":{total:31,contacted:25,never:6,sumDays:0},"2024-05":{total:25,contacted:19,never:6,sumDays:0},"2024-06":{total:13,contacted:12,never:1,sumDays:0},"2024-07":{total:23,contacted:22,never:1,sumDays:0},"2024-08":{total:17,contacted:17,never:0,sumDays:0},"2024-09":{total:12,contacted:12,never:0,sumDays:0},"2024-10":{total:89,contacted:78,never:11,sumDays:0},"2024-11":{total:89,contacted:78,never:11,sumDays:0},"2024-12":{total:97,contacted:90,never:7,sumDays:0},"2025-01":{total:175,contacted:166,never:9,sumDays:0},"2025-02":{total:166,contacted:157,never:9,sumDays:0},"2025-03":{total:164,contacted:149,never:15,sumDays:0},"2025-04":{total:103,contacted:96,never:7,sumDays:0},"2025-05":{total:83,contacted:27,never:56,sumDays:2096},"2025-06":{total:56,contacted:32,never:24,sumDays:4363},"2025-07":{total:65,contacted:28,never:37,sumDays:3256},"2025-08":{total:54,contacted:31,never:23,sumDays:2542},"2025-09":{total:49,contacted:48,never:1,sumDays:94},"2025-10":{total:69,contacted:65,never:4,sumDays:111},"2025-11":{total:64,contacted:51,never:13,sumDays:544},"2025-12":{total:52,contacted:47,never:5,sumDays:146},"2026-01":{total:87,contacted:84,never:3,sumDays:163},"2026-02":{total:50,contacted:47,never:3,sumDays:126},"2026-03":{total:82,contacted:58,never:24,sumDays:114},"2026-04":{total:2,contacted:2,never:0,sumDays:4}}
+};
+
 // ============================== LIVE (mutable) DATA VIEW ==============================
 // These working variables are what every tab builder reads. They start as clones of the
 // embedded BASE_* data and are recomputed by rebuildAll() whenever data is uploaded/cleared.
 let MONTHS, MONTH_KEYS, ENTITIES, ENTITY_COLORS, LEADS_2025, SPEND_RANGE, SINGLE_YEAR;
 let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, TOTAL_LEADS, CLOSED_DEALS;
+let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
 
 // Canonical stores that survive across uploads
 let spendStore = {};              // "YYYY-MM" -> { entityName: value }
@@ -326,6 +350,40 @@ function applyLeads(){
   }
 }
 
+// ---- Roll uploaded CRM records up into the response-time aggregate shape (mirrors BASE_RESPONSE) ----
+function aggregateResponse(recs){
+  const blank=()=>({leads:0,contacted:0,never:0,sumDays:0});
+  const agg={total:0,contactedCount:0,contactedSum:0,neverCount:0,within7Count:0,
+    convContactedCount:0,convSum:0,deadContactedCount:0,deadSum:0,convTotal:0,deadTotal:0,
+    dist:{}, convByBucket:{}, bySource:{}, monthly:{}};
+  [...RESPONSE_BUCKETS,"never"].forEach(b=>{agg.dist[b]=0;agg.convByBucket[b]=0;});
+  const bkey=(r)=>{ if(!r.contacted) return "never"; const d=r.respDays;
+    return d<=7?"0-7":d<=14?"8-14":d<=30?"15-30":d<=60?"31-60":"60+"; };
+  recs.forEach(r=>{
+    agg.total++;
+    const src=agg.bySource[r.channel]||(agg.bySource[r.channel]=blank());
+    src.leads++;
+    if(r.sold)agg.convTotal++; if(r.statusBucket==="Dead Lead")agg.deadTotal++;
+    const b=bkey(r); agg.dist[b]=(agg.dist[b]||0)+1; if(r.sold)agg.convByBucket[b]=(agg.convByBucket[b]||0)+1;
+    let mo=null;
+    if(r.inqYear&&r.inqMonth){ const k=mkKey(r.inqYear,r.inqMonth); mo=agg.monthly[k]||(agg.monthly[k]={total:0,contacted:0,never:0,sumDays:0}); mo.total++; }
+    if(r.contacted){
+      const d=r.respDays;
+      agg.contactedCount++; agg.contactedSum+=d; src.contacted++; src.sumDays+=d;
+      if(d<=7)agg.within7Count++;
+      if(r.sold){agg.convContactedCount++;agg.convSum+=d;}
+      if(r.statusBucket==="Dead Lead"){agg.deadContactedCount++;agg.deadSum+=d;}
+      if(mo){mo.contacted++;mo.sumDays+=d;}
+    } else { agg.neverCount++; src.never++; if(mo)mo.never++; }
+  });
+  return agg;
+}
+
+// ---- Derive response-time working var from crmRecords (or restore embedded) ----
+function applyResponse(){
+  RESPONSE = crmUploaded ? aggregateResponse([...crmRecords.values()]) : clone(BASE_RESPONSE);
+}
+
 // ============================== FORMAT HELPERS ==============================
 const fmtUSD=(v)=>{const s=v<0?"-":"";v=Math.abs(v);
   if(v>=1e6)return s+"$"+(v/1e6).toFixed(2).replace(/\.?0+$/,"")+"M";
@@ -359,7 +417,7 @@ function moveTip(tip,wrap,x,y){
 }
 
 // ============================== CHART: MULTI-LINE ==============================
-function lineChart(el,{labels,series,yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,directLabelLast=false,zeroBaseline=true}){
+function lineChart(el,{labels,series,yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,directLabelLast=false,zeroBaseline=true,xTickEvery=1}){
   const W=760,H=height,padL=64,padR=directLabelLast?96:22,padT=16,padB=34;
   let allv=[]; series.forEach(s=>allv.push(...s.data));
   let mn=Math.min(...allv,zeroBaseline?0:Math.min(...allv)),mx=Math.max(...allv);
@@ -372,7 +430,8 @@ function lineChart(el,{labels,series,yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,di
   ticks.forEach(t=>{g+=`<line class="${t===0?'zero':''}" x1="${padL}" y1="${Y(t)}" x2="${W-padR}" y2="${Y(t)}"/>`;});
   g+='</g><g class="axis">';
   ticks.forEach(t=>{g+=`<text x="${padL-9}" y="${Y(t)+4}" text-anchor="end">${yFmt(t)}</text>`;});
-  labels.forEach((l,i)=>{g+=`<text x="${X(i)}" y="${H-12}" text-anchor="middle">${l}</text>`;});
+  labels.forEach((l,i)=>{ if(xTickEvery>1 && i%xTickEvery!==0 && i!==labels.length-1) return;
+    g+=`<text x="${X(i)}" y="${H-12}" text-anchor="middle">${l}</text>`;});
   g+='</g>';
   series.forEach(s=>{
     let d=s.data.map((v,i)=>(i?'L':'M')+X(i).toFixed(1)+' '+Y(v).toFixed(1)).join(' ');
@@ -764,12 +823,135 @@ function funnelChart(el2,stages,base){
   g+='</div>';el2.innerHTML=g;
 }
 
+// ============================== CHART: CATEGORY BARS (per-bar color + value label) ==============================
+function catBarChart(el2,{cats,yFmt=fmtNum,valLabel=(c)=>fmtNum(c.value),tipRows=(c)=>`<div class="tt-row"><span class="k">Value</span><span class="v">${fmtNum(c.value)}</span></div>`,height=290}){
+  const W=760,H=height,padL=54,padR=18,padT=26,padB=40;
+  const data=cats.map(c=>c.value);
+  const {ticks,lo,hi}=niceTicks(0,Math.max(...data,1),5);
+  const xw=W-padL-padR,yh=H-padT-padB,n=cats.length,slot=xw/n,bw=Math.min(66,slot*0.6);
+  const X=i=>padL+slot*i+slot/2, Y=v=>padT+yh*(1-(v-lo)/(hi-lo));
+  let g=`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet"><g class="grid">`;
+  ticks.forEach(t=>{g+=`<line class="${t===0?'zero':''}" x1="${padL}" y1="${Y(t)}" x2="${W-padR}" y2="${Y(t)}"/>`;});
+  g+='</g><g class="axis">';
+  ticks.forEach(t=>{g+=`<text x="${padL-9}" y="${Y(t)+4}" text-anchor="end">${yFmt(t)}</text>`;});
+  cats.forEach((c,i)=>{g+=`<text x="${X(i)}" y="${H-14}" text-anchor="middle">${c.label}</text>`;});
+  g+='</g>';
+  const y0=Y(0);
+  cats.forEach((c,i)=>{const yv=Y(c.value);
+    g+=`<rect class="bar" data-i="${i}" x="${X(i)-bw/2}" y="${yv}" width="${bw}" height="${Math.max(y0-yv,0.5)}" rx="3" fill="${c.color}" opacity="0.9"/>`;
+    g+=`<text class="dlabel" x="${X(i)}" y="${yv-6}" text-anchor="middle">${valLabel(c)}</text>`;});
+  g+='</svg>';el2.innerHTML=g;el2.classList.add("chart-wrap");
+  const svg=el2.querySelector("svg"),tip=attachTip(el2);
+  svg.querySelectorAll(".bar").forEach(b=>{
+    b.addEventListener("mouseenter",()=>b.setAttribute("opacity","1"));
+    b.addEventListener("mouseleave",()=>{b.setAttribute("opacity","0.9");tip.style.opacity=0;});
+    b.addEventListener("mousemove",e=>{const i=+b.dataset.i,r=svg.getBoundingClientRect();
+      tip.innerHTML=`<div class="tt-title">${cats[i].full||cats[i].label}</div>${tipRows(cats[i])}`;tip.style.opacity=1;
+      moveTip(tip,el2,(e.clientX-r.left)/r.width*el2.clientWidth,(e.clientY-r.top)/r.height*el2.clientHeight);});
+  });
+}
+
+// ---- TAB: RESPONSE TIME (speed-to-lead) ----
+function buildResponse(){
+  const p=document.getElementById("tab5");
+  const R=RESPONSE;
+  const fmtDays=(v,d=1)=>v.toFixed(d)+(Math.abs(v-1)<1e-9?" day":" days");
+  const buckets=[...RESPONSE_BUCKETS,"never"];
+  const avgAll=R.contactedCount?R.contactedSum/R.contactedCount:0;
+  const avgConv=R.convContactedCount?R.convSum/R.convContactedCount:0;
+  const avgDead=R.deadContactedCount?R.deadSum/R.deadContactedCount:0;
+  const pctWithin7=R.total?R.within7Count/R.total*100:0;
+  const pctNever=R.total?R.neverCount/R.total*100:0;
+  const convAdv=avgDead-avgConv; // positive ⇒ converted leads reached faster
+
+  // by-source rows
+  const srcRows=CHANNEL_ORDER.filter(s=>R.bySource[s]&&R.bySource[s].leads>0).map((s,i)=>{
+    const b=R.bySource[s];
+    return {name:s, color:CHANNEL_COLORS[CHANNEL_ORDER.indexOf(s)]||"#6a6a6a",
+      leads:b.leads, contacted:b.contacted, never:b.never,
+      avg:b.contacted?b.sumDays/b.contacted:0, neverPct:b.leads?b.never/b.leads*100:0};
+  }).sort((a,b)=>a.avg-b.avg);
+  const measured=srcRows.filter(r=>r.contacted>=5); // avoid tiny-sample distortion in the callout
+  const fastSrc=measured[0], slowSrc=measured[measured.length-1];
+
+  // monthly trend
+  const mKeys=Object.keys(R.monthly).sort();
+  const mLabel=k=>{const [y,m]=k.split("-");return MONTH_NAMES[+m-1]+" '"+y.slice(2);};
+  const mAvg=mKeys.map(k=>{const m=R.monthly[k];return m.contacted?m.sumDays/m.contacted:0;});
+  const mNeverPct=mKeys.map(k=>{const m=R.monthly[k];return m.total?m.never/m.total*100:0;});
+  // worst/best responding month among those with a real contacted sample
+  const monthStats=mKeys.map((k,i)=>({k,avg:mAvg[i],contacted:R.monthly[k].contacted})).filter(o=>o.contacted>=5);
+  const slowMonth=monthStats.slice().sort((a,b)=>b.avg-a.avg)[0];
+  const recent=monthStats.slice(-3);
+  const recentAvg=recent.length?sum(recent.map(o=>o.avg))/recent.length:0;
+
+  p.innerHTML=`
+   <div class="tab-head"><h2>Response Time · Speed-to-Lead</h2>
+     <p>How fast inbound leads are contacted after inquiry, and whether faster response correlates with conversion. Measured as whole days from <b>Inquiry Date</b> to <b>First Contacted</b> in Export.xlsx (${fmtNum(R.total)} leads); leads with no First Contacted date are counted as <b>never contacted</b>.</p></div>
+   <div class="kpis">
+     <div class="kpi"><div class="label">Avg Days to First Contact</div><div class="val">${fmtDays(avgAll)}</div><div class="sub">across ${fmtNum(R.contactedCount)} contacted leads</div></div>
+     <div class="kpi alt"><div class="label">Converted vs Dead — Avg Response</div><div class="val g">${fmtDays(avgConv)}</div><div class="sub">converted · vs <b>${fmtDays(avgDead)}</b> for dead leads</div></div>
+     <div class="kpi ${pctWithin7>=50?'':'warn'}"><div class="label">Contacted Within 7 Days</div><div class="val">${fmtPct(pctWithin7,1)}</div><div class="sub">${fmtNum(R.within7Count)} of ${fmtNum(R.total)} leads</div></div>
+     <div class="kpi bad"><div class="label">Never Contacted</div><div class="val r">${fmtPct(pctNever,1)}</div><div class="sub">${fmtNum(R.neverCount)} leads with no first contact</div></div>
+   </div>
+   <div class="grid2">
+     <div class="card"><h3>Response Time Distribution</h3><p class="csub">How many of ${fmtNum(R.total)} leads were first contacted within each window</p><div id="rtDist"></div>
+       <div class="legend">${buckets.map(b=>`<div class="item"><span class="swatch" style="background:${RESPONSE_BUCKET_COLORS[b]}"></span>${RESPONSE_BUCKET_LABELS[b]}</div>`).join("")}</div>
+     </div>
+     <div class="card"><h3>Response Time vs Conversion</h3><p class="csub">Conversion rate (closed &amp; sold ÷ leads) by response-time bucket — do faster-contacted leads convert better?</p><div id="rtConv"></div>
+       <div class="note" style="margin-top:12px"><b>Read:</b> Converted franchisees were reached in <b>${fmtDays(avgConv)}</b> on average versus <b>${fmtDays(avgDead)}</b> for dead leads — a ${convAdv>=0?"faster":"slower"} touch on the deals that closed. Absolute conversion stays low everywhere because only ${R.convTotal} of ${fmtNum(R.total)} leads closed, so bucket rates are directional on a small won sample.</div>
+     </div>
+   </div>
+   <div class="card">
+     <h3>Response Time by Source</h3><p class="csub">Average days to first contact per acquisition channel — plus how many leads each channel never reached</p>
+     <div id="rtSrc" style="margin-top:6px"></div>
+     <div class="tbl-scroll" style="margin-top:16px"><table class="tbl">
+       <thead><tr><th>Source</th><th>Leads</th><th>Contacted</th><th>Never Contacted</th><th>Never %</th><th>Avg Days to Contact</th></tr></thead>
+       <tbody>${srcRows.map(r=>`<tr>
+         <td><span class="chip"><span class="sw" style="background:${r.color}"></span>${r.name}</span></td>
+         <td>${fmtNum(r.leads)}</td><td>${fmtNum(r.contacted)}</td><td>${fmtNum(r.never)}</td>
+         <td class="${r.neverPct>=30?'neg':''}">${fmtPct(r.neverPct,1)}</td>
+         <td class="${r.avg<=7?'pos':'neg'}">${r.contacted?fmtDays(r.avg):"—"}</td></tr>`).join("")}
+       </tbody>
+     </table></div>
+     ${fastSrc&&slowSrc?`<div class="note"><b>Read:</b> <b>${fastSrc.name}</b> is the fastest channel to respond at <b>${fmtDays(fastSrc.avg)}</b>, while <b>${slowSrc.name}</b> lags at <b>${fmtDays(slowSrc.avg)}</b>. Averages count only leads that were eventually contacted — channels with high <b>Never %</b> (e.g. leads that were never worked at all) hide an even larger speed problem than the day counts alone suggest.</div>`:""}
+   </div>
+   <div class="card">
+     <h3>Monthly Response Time Trend</h3><p class="csub">Average days from inquiry to first contact by inquiry month — is the team getting faster or slower?</p>
+     <div id="rtTrend"></div>
+     ${slowMonth?`<div class="note"><b>Read:</b> Speed-to-lead is not steady. The slowest cohort was <b>${mLabel(slowMonth.k)}</b> at <b>${fmtDays(slowMonth.avg)}</b> to first contact, versus <b>${fmtDays(recentAvg)}</b> averaged across the three most recent months. Spikes line up with months where a large share of leads went <b>never contacted</b> and the few that were reached were touched late — a backlog signature, not a uniform slowdown.</div>`:""}
+   </div>`;
+
+  // distribution
+  catBarChart(document.getElementById("rtDist"),{
+    cats:buckets.map(b=>({label:RESPONSE_BUCKET_LABELS[b].replace(" days","d").replace("Never contacted","Never"),full:RESPONSE_BUCKET_LABELS[b],value:R.dist[b]||0,color:RESPONSE_BUCKET_COLORS[b]})),
+    yFmt:fmtNum, valLabel:c=>fmtNum(c.value),
+    tipRows:c=>`<div class="tt-row"><span class="k">Leads</span><span class="v">${fmtNum(c.value)}</span></div><div class="tt-row"><span class="k">Share</span><span class="v">${fmtPct(R.total?c.value/R.total*100:0,1)}</span></div>`
+  });
+  // conversion by bucket
+  catBarChart(document.getElementById("rtConv"),{
+    cats:buckets.map(b=>{const leads=R.dist[b]||0,won=R.convByBucket[b]||0,conv=leads?won/leads*100:0;
+      const color=conv>=INDUSTRY_BENCHMARK?"#00e676":conv>0?"#ffb020":"#6a6a6a";
+      return {label:RESPONSE_BUCKET_LABELS[b].replace(" days","d").replace("Never contacted","Never"),full:RESPONSE_BUCKET_LABELS[b],value:conv,color,_won:won,_leads:leads};}),
+    yFmt:v=>fmtPct(v,1), valLabel:c=>fmtPct(c.value,2),
+    tipRows:c=>`<div class="tt-row"><span class="k">Conversion</span><span class="v">${fmtPct(c.value,2)}</span></div><div class="tt-row"><span class="k">Won / Leads</span><span class="v">${c._won} / ${fmtNum(c._leads)}</span></div>`
+  });
+  // by source (avg days, horizontal)
+  hBarChart(document.getElementById("rtSrc"),{items:srcRows.map(r=>({name:r.name,value:r.avg,color:r.color,suffix:"d"})),valFmt:v=>v.toFixed(1)});
+  // monthly trend
+  lineChart(document.getElementById("rtTrend"),{labels:mKeys.map(mLabel),
+    series:[{name:"Avg days to contact",color:"#3ba7ff",data:mAvg}],
+    yFmt:v=>Math.round(v)+"d", tipFmt:v=>fmtDays(v), height:300, zeroBaseline:true,
+    xTickEvery:Math.max(1,Math.ceil(mKeys.length/12))});
+}
+
 // ============================== TAB NAV ==============================
 const TABS=[
   {t:"Fund Overview",b:buildFund},
   {t:"Monthly Spend",b:buildMonthly},
   {t:"Lead Volume vs Spend",b:buildLeadsSpend},
   {t:"Channel Performance",b:buildChannels},
+  {t:"Response Time",b:buildResponse},
   {t:"Cost Per Conversion",b:buildCPC}
 ];
 const nav=document.getElementById("tabs");
@@ -785,7 +967,7 @@ function activate(i){
 
 // ============================== REBUILD / RENDER ALL ==============================
 function renderTabs(){ TABS.forEach(tb=>tb.b()); activate(currentTab); }
-function rebuildAll(){ applySpend(); applyLeads(); renderTabs(); updateHeader(); }
+function rebuildAll(){ applySpend(); applyLeads(); applyResponse(); renderTabs(); updateHeader(); }
 
 function updateHeader(){
   // "Data through" = latest spend month; "Leads through" = latest lead year
@@ -904,6 +1086,16 @@ function parseDateCell(v){
   if(iso) return {year:+iso[1], month:+iso[2]};
   return null;
 }
+// Whole-day number (days since 1970-01-01 UTC) for date diffing, or null. Time-of-day ignored.
+function dateToDayNum(v){
+  if(v==null||v==="") return null;
+  if(typeof v==="number"&&isFinite(v)) return Math.floor(v-25569); // Excel serial → day index
+  const m=String(v).match(/(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{4})/); // MM/DD/YYYY
+  if(m) return Math.round(Date.UTC(+m[3],+m[1]-1,+m[2])/86400000);
+  const iso=String(v).match(/(\d{4})-(\d{2})-(\d{2})/);
+  if(iso) return Math.round(Date.UTC(+iso[1],+iso[2]-1,+iso[3])/86400000);
+  return null;
+}
 // Returns {entity, months:[{year,month,value}]} or null if file has no A&M line.
 function parsePL(sst, sheetXml){
   const rows=[]; eachRow(sheetXml,sst,(n,cells)=>{rows[n]=cells;});
@@ -959,7 +1151,7 @@ function statusBucket(s){ s=(s||"").trim();
 // Parse Export.xlsx into deduped records, adding into crmRecords. Returns {added, duplicate, total}.
 function parseCRM(sst, sheetXml){
   let header=null, col={}, added=0, dup=0, seen=0;
-  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date"];
+  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date","First Contacted"];
   eachRow(sheetXml,sst,(n,cells)=>{
     if(!header){ header=cells;
       want.forEach(w=>{ for(let i=0;i<header.length;i++){ if(String(header[i]||"").trim()===w){ col[w]=i; break; } } });
@@ -972,8 +1164,13 @@ function parseCRM(sst, sheetXml){
     const key=String(inqRaw||"").trim()+"|"+email;
     const d=parseDateCell(inqRaw);
     const status=cells[col["Lead Status"]];
+    // response time: whole days from Inquiry Date to First Contacted (blank First Contacted = never contacted)
+    const inqDay=dateToDayNum(inqRaw), fcDay=dateToDayNum(cells[col["First Contacted"]]);
+    const respDays=(fcDay!=null&&inqDay!=null)?Math.max(0,fcDay-inqDay):null;
+    const contacted=(respDays!=null); // has a measurable inquiry→first-contact gap
     const rec={
       inqYear:d?d.year:null, inqMonth:d?d.month:null,
+      contacted, respDays,
       statusBucket:statusBucket(status),
       sold:String(status||"").trim()==="Closed Lead- Sold",
       reasonGroup:groupReason(cells[col["Lead Reason"]]),
