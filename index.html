@@ -113,6 +113,38 @@
   .note{font-size:11.5px;color:var(--dim);margin-top:14px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6}
   .note b{color:var(--muted)}
 
+  /* ---- Animated conversion funnel ---- */
+  .fnl{max-width:660px;margin:2px auto 0;padding:2px 0}
+  .fnl-stage{display:flex;justify-content:center}
+  .fnl-bar{
+    position:relative;width:var(--w);min-width:132px;height:46px;border-radius:9px;
+    background:var(--c);color:#0a0a0a;font-weight:700;
+    display:flex;align-items:center;justify-content:space-between;padding:0 16px;
+    box-shadow:0 3px 12px rgba(0,0,0,.4),inset 0 1px 0 rgba(255,255,255,.28);
+    opacity:0;transform:scaleX(.05) translateY(-18px);transform-origin:center;
+    transition:transform .68s cubic-bezier(.2,1.05,.32,1),opacity .45s ease;
+  }
+  .fnl-bar::after{content:"";position:absolute;inset:0;border-radius:9px;
+    background:linear-gradient(180deg,rgba(255,255,255,.22),rgba(0,0,0,.08));pointer-events:none}
+  .fnl.play .fnl-bar{opacity:1;transform:scaleX(1) translateY(0)}
+  .fnl-name{position:relative;z-index:1;font-size:13px;letter-spacing:.2px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+  .fnl-val{position:relative;z-index:1;font-size:14px;font-variant-numeric:tabular-nums;white-space:nowrap;padding-left:10px}
+  .fnl-drop{position:relative;height:32px;display:flex;align-items:center;justify-content:center}
+  .fnl-drop-badge{position:relative;z-index:2;font-size:11px;font-weight:600;color:var(--muted);
+    background:var(--surface2);border:1px solid var(--border);border-radius:20px;padding:2px 11px;
+    font-variant-numeric:tabular-nums;opacity:0;transition:opacity .4s ease}
+  .fnl.play .fnl-drop-badge{opacity:1}
+  .fnl-dot{position:absolute;left:50%;top:1px;width:6px;height:6px;border-radius:50%;background:var(--c);opacity:0;box-shadow:0 0 6px var(--c)}
+  .fnl.play .fnl-dot{animation:fnlFall 1.05s ease-in infinite}
+  @keyframes fnlFall{
+    0%{opacity:0;transform:translate(-50%,-8px) scale(.5)}
+    18%{opacity:.95}
+    82%{opacity:.95}
+    100%{opacity:0;transform:translate(-50%,28px) scale(1)}
+  }
+  .fnl-legend{display:flex;align-items:center;justify-content:center;gap:8px;margin-top:14px;font-size:11px;color:var(--muted)}
+  .fnl-legend .bar{height:8px;width:130px;border-radius:5px;background:linear-gradient(90deg,#00e676,#c2e021,#ffd23f,#ff8534,#ff3b30)}
+
   .reco{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
   .reco .r{background:var(--surface2);border:1px solid var(--border);border-radius:11px;padding:15px 16px;border-left:3px solid var(--c3)}
   .reco .r.up{border-left-color:var(--green)} .reco .r.down{border-left-color:var(--loss)}
@@ -859,6 +891,13 @@ function buildCPC(){
   p.innerHTML=`
    <div class="tab-head"><h2>Cost Per Conversion</h2>
      <p>Three years of Advertising &amp; Marketing spend (2023–2025) measured against the 17 franchise deals closed, with budget-reallocation guidance grounded in the actual channel performance from Tab&nbsp;4.</p></div>
+   <div class="card">
+     <h3>Lead Conversion Funnel</h3>
+     <p class="csub">How ${fmtNum(3192)} leads flow through the franchise sales pipeline — click this tab to replay the animation. Each stage narrows and colors from green to red as leads drop off.</p>
+     <div id="cpcFunnelAnim"></div>
+     <div class="fnl-legend"><span>Wide / green = top of funnel</span><span class="bar"></span><span>Narrow / red = closed</span></div>
+     <div class="note">Total Leads, Contacted, Nurture, Intro Call and Closed / Won are actual counts from the CRM export. <b>*</b> Discovery, FDD Review and Approved are modeled mid-pipeline stages (the export tracks these under a combined pipeline bucket), interpolated between Intro Call and Closed / Won.</div>
+   </div>
    <div class="kpis">
      <div class="kpi"><div class="label">Total Mktg Spend · 2023–25</div><div class="val">${fmtUSD(totalSpend)}</div><div class="sub">${fmtUSDfull(totalSpend)}</div></div>
      <div class="kpi alt"><div class="label">Deals Closed</div><div class="val g">${CLOSED_DEALS}</div><div class="sub">from ${fmtNum(leads2325)} leads</div></div>
@@ -894,6 +933,7 @@ function buildCPC(){
      <div class="note"><b>Bottom line:</b> at ${fmtUSD(costPerDeal)} per closed deal the current model is dominated by wasted top-of-funnel spend on channels that convert at 0%. Redirecting budget from Ninja/LinkedIn volume into speed-to-lead follow-up and higher-intent referral sources is the fastest path to lowering cost per conversion.</div>
    </div>`;
   barChart(document.getElementById("cpcSpend"),{labels:["2023","2024","2025"],data:spend2325,color:"#3ba7ff",unit:"Mktg spend",height:220});
+  buildFunnelAnim(document.getElementById("cpcFunnelAnim"));
   // funnel
   funnelChart(document.getElementById("funnel"),[
     {label:"Total Leads",value:leads2325,color:"#3ba7ff"},
@@ -913,6 +953,46 @@ function funnelChart(el2,stages,base){
         <div style="width:${Math.max(p,0.6)}%;height:100%;background:${s.color};border-radius:6px;opacity:.9;display:flex;align-items:center;justify-content:flex-end;padding-right:8px"></div>
       </div></div>`;});
   g+='</div>';el2.innerHTML=g;
+}
+
+// ---- Animated conversion funnel (Cost Per Conversion tab) ----
+function buildFunnelAnim(el){
+  if(!el)return;
+  const IC=LEAD_STATUS["Intro Call"]||40, WON=CLOSED_DEALS||17;
+  const stages=[
+    {label:"Total Leads",  value:3192,               c:"#00e676"},
+    {label:"Contacted",    value:LEAD_STATUS["Contacted"]||390, c:"#74e34a"},
+    {label:"Nurture",      value:LEAD_STATUS["Nurture"]||373,   c:"#c2e021"},
+    {label:"Intro Call",   value:IC,                 c:"#ffd23f"},
+    {label:"Discovery",    value:Math.max(WON+3,Math.round(IC*0.85)), c:"#ffab2e", est:true},
+    {label:"FDD Review",   value:Math.max(WON+2,Math.round(IC*0.70)), c:"#ff8534", est:true},
+    {label:"Approved",     value:Math.max(WON+1,Math.round(IC*0.55)), c:"#ff5f3c", est:true},
+    {label:"Closed / Won", value:WON,                c:"#ff3b30"}
+  ];
+  const maxV=stages[0].value, w=v=>(18+82*Math.pow(v/maxV,0.42)).toFixed(1);
+  let h='<div class="fnl">';
+  stages.forEach((s,i)=>{
+    if(i>0){
+      const prev=stages[i-1].value, drop=prev>0?(prev-s.value)/prev*100:0, bd=i*0.18+0.32;
+      h+=`<div class="fnl-drop" style="--c:${stages[i-1].c}">`
+        +`<span class="fnl-dot" style="left:calc(50% - 16px);animation-delay:${(i*0.13).toFixed(2)}s"></span>`
+        +`<span class="fnl-dot" style="animation-delay:${(i*0.13+0.32).toFixed(2)}s"></span>`
+        +`<span class="fnl-dot" style="left:calc(50% + 16px);animation-delay:${(i*0.13+0.64).toFixed(2)}s"></span>`
+        +`<span class="fnl-drop-badge" style="transition-delay:${bd.toFixed(2)}s">↓ ${fmtPct(drop,1)} drop-off</span>`
+        +`</div>`;
+    }
+    const d=(i*0.18).toFixed(2);
+    h+=`<div class="fnl-stage"><div class="fnl-bar" style="--w:${w(s.value)}%;--c:${s.c};transition-delay:${d}s,${d}s">`
+      +`<span class="fnl-name">${s.label}${s.est?' <b style="font-weight:800">*</b>':''}</span>`
+      +`<span class="fnl-val">${fmtNum(s.value)}</span></div></div>`;
+  });
+  h+='</div>';el.innerHTML=h;
+}
+function playFunnel(){
+  const f=document.querySelector("#tab4 .fnl");
+  if(!f)return;
+  f.classList.remove("play"); void f.offsetWidth;
+  requestAnimationFrame(()=>f.classList.add("play"));
 }
 
 // ============================== CHART: CATEGORY BARS (per-bar color + value label) ==============================
@@ -1300,6 +1380,7 @@ function activate(i){
   document.querySelectorAll("nav.tabs button").forEach((b,j)=>b.classList.toggle("active",i===j));
   document.querySelectorAll(".tab-panel").forEach((pn,j)=>pn.classList.toggle("active",i===j));
   window.scrollTo({top:0,behavior:"instant"});
+  if(TABS[i]&&TABS[i].t==="Cost Per Conversion") playFunnel();
 }
 
 // ============================== REBUILD / RENDER ALL ==============================
