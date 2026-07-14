@@ -181,6 +181,7 @@
   <section class="tab-panel" id="tab2"></section>
   <section class="tab-panel" id="tab3"></section>
   <section class="tab-panel" id="tab5"></section>
+  <section class="tab-panel" id="tab6"></section>
   <section class="tab-panel" id="tab4"></section>
 </main>
 
@@ -521,6 +522,54 @@ function stackedBar(el,{segments}){ // segments:[{label,value,color}]
     bar+=`<div title="${s.label}: ${fmtNum(s.value)} (${p.toFixed(1)}%)" style="width:${p}%;background:${s.color};min-width:1px"></div>`;});
   bar+='</div>';
   el.innerHTML=bar;
+}
+
+// ============================== CHART: DUAL PANEL (spend over leads, shared x) ==============================
+// Two vertically-stacked panels sharing one month axis: spend (signed) on top, lead volume below.
+// Months flagged as misaligned get a full-height tint band so the eye connects spend↔demand gaps.
+function dualPanelChart(el2,{labels,spend,leads,status,tyLabel}){
+  const W=760,H=384,padL=66,padR=18,padT=30,padB=30,panelGap=48;
+  const innerH=H-padT-padB, panelH=(innerH-panelGap)/2;
+  const topT=padT, botT=topT+panelH+panelGap;
+  const sVals=spend.map(v=>v==null?0:v), lVals=leads.map(v=>v==null?0:v);
+  const sT=niceTicks(Math.min(0,...sVals),Math.max(0,...sVals),4);
+  const lT=niceTicks(0,Math.max(...lVals,1),4);
+  const xw=W-padL-padR,n=labels.length,slot=xw/n,bw=Math.min(30,slot*0.46);
+  const X=i=>padL+slot*i+slot/2;
+  const Ys=v=>topT+panelH*(1-(v-sT.lo)/(sT.hi-sT.lo));
+  const Yl=v=>botT+panelH*(1-(v-lT.lo)/(lT.hi-lT.lo));
+  const hue={under:'rgba(0,230,118,.10)',over:'rgba(255,82,82,.11)',ok:'',na:''};
+  let g=`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  status.forEach((st,i)=>{if(hue[st.s])g+=`<rect x="${X(i)-slot/2}" y="${topT}" width="${slot}" height="${botT+panelH-topT}" fill="${hue[st.s]}"/>`;});
+  g+='<g class="grid">';
+  sT.ticks.forEach(t=>g+=`<line class="${t===0?'zero':''}" x1="${padL}" y1="${Ys(t)}" x2="${W-padR}" y2="${Ys(t)}"/>`);
+  lT.ticks.forEach(t=>g+=`<line class="${t===0?'zero':''}" x1="${padL}" y1="${Yl(t)}" x2="${W-padR}" y2="${Yl(t)}"/>`);
+  g+='</g><g class="axis">';
+  sT.ticks.forEach(t=>g+=`<text x="${padL-9}" y="${Ys(t)+4}" text-anchor="end">${fmtUSD(t)}</text>`);
+  lT.ticks.forEach(t=>g+=`<text x="${padL-9}" y="${Yl(t)+4}" text-anchor="end">${fmtNum(t)}</text>`);
+  labels.forEach((l,i)=>g+=`<text x="${X(i)}" y="${H-10}" text-anchor="middle">${l}</text>`);
+  g+='</g>';
+  g+=`<text x="${padL}" y="${topT-10}" style="fill:var(--muted);font-size:11px;font-weight:600">Marketing Spend · ${tyLabel}</text>`;
+  g+=`<text x="${padL}" y="${botT-10}" style="fill:var(--muted);font-size:11px;font-weight:600">Lead Volume · ${tyLabel}</text>`;
+  const sy0=Ys(0);
+  spend.forEach((v,i)=>{if(v==null)return;const yv=Ys(v),top=Math.min(yv,sy0),h=Math.abs(yv-sy0);
+    g+=`<rect x="${X(i)-bw/2}" y="${top}" width="${bw}" height="${Math.max(h,0.5)}" rx="2.5" fill="${v<0?'var(--loss)':'#00e676'}" opacity=".9"/>`;});
+  const ly0=Yl(0);
+  leads.forEach((v,i)=>{if(v==null)return;const yv=Yl(v);
+    g+=`<rect x="${X(i)-bw/2}" y="${yv}" width="${bw}" height="${Math.max(ly0-yv,0.5)}" rx="2.5" fill="#3ba7ff" opacity=".9"/>`;});
+  g+=`<rect x="${padL}" y="${topT}" width="${xw}" height="${botT+panelH-topT}" fill="transparent" id="hit"/></svg>`;
+  el2.innerHTML=g;el2.classList.add("chart-wrap");
+  const svg=el2.querySelector("svg"),tip=attachTip(el2),hit=svg.querySelector("#hit");
+  const stTxt={under:'Underspent vs demand',over:'Overspent vs demand',ok:'Aligned',na:'No data'};
+  hit.addEventListener("mousemove",e=>{const r=svg.getBoundingClientRect(),sx=(e.clientX-r.left)/r.width*W;
+    let i=Math.floor((sx-padL)/slot);i=Math.max(0,Math.min(n-1,i));
+    tip.innerHTML=`<div class="tt-title">${labels[i]}</div>
+      <div class="tt-row"><span class="k"><span class="sw" style="background:#00e676"></span>Spend</span><span class="v">${spend[i]==null?'—':fmtUSDfull(spend[i])}</span></div>
+      <div class="tt-row"><span class="k"><span class="sw" style="background:#3ba7ff"></span>Leads</span><span class="v">${leads[i]==null?'—':fmtNum(leads[i])}</span></div>
+      <div class="tt-row"><span class="k">Status</span><span class="v">${stTxt[status[i].s]}</span></div>`;
+    tip.style.opacity=1;
+    moveTip(tip,el2,(e.clientX-r.left)/r.width*el2.clientWidth,(e.clientY-r.top)/r.height*el2.clientHeight);});
+  hit.addEventListener("mouseleave",()=>tip.style.opacity=0);
 }
 
 // ============================== TAB BUILDERS ==============================
@@ -945,6 +994,136 @@ function buildResponse(){
     xTickEvery:Math.max(1,Math.ceil(mKeys.length/12))});
 }
 
+// ---- TAB: SEASONAL PATTERNS ----
+function buildSeasonal(){
+  const p=document.getElementById("tab6");
+  const R=RESPONSE;
+  const monTotal=k=>Object.values(spendStore[k]||{}).reduce((a,v)=>a+(typeof v==="number"?v:0),0);
+
+  // ---- Lead volume by month-of-year (average across every year present in Export.xlsx) ----
+  const lSum=Array(12).fill(0), lCnt=Array(12).fill(0);
+  Object.keys(R.monthly).forEach(k=>{const m=+k.split("-")[1]; lSum[m-1]+=R.monthly[k].total; lCnt[m-1]++;});
+  const leadAvg=lSum.map((s,i)=>lCnt[i]?s/lCnt[i]:0);
+  const leadYears=[...new Set(Object.keys(R.monthly).map(k=>+k.split("-")[0]))].sort();
+  const validM=[...Array(12).keys()].filter(i=>lCnt[i]>0);
+  if(!validM.length){p.innerHTML=`<div class="tab-head"><h2>Seasonal Patterns</h2><p>No monthly lead data available.</p></div>`;return;}
+  const meanLead=sum(validM.map(i=>leadAvg[i]))/validM.length;
+  const peakLeadI=validM.reduce((a,b)=>leadAvg[b]>leadAvg[a]?b:a);
+  const slowLeadI=validM.reduce((a,b)=>leadAvg[b]<leadAvg[a]?b:a);
+
+  // ---- Target-year (2025) spend + leads, month by month ----
+  const spendYears=[...new Set(Object.keys(spendStore).map(k=>+k.split("-")[0]))].sort();
+  const TY=spendYears.includes(2025)?2025:(spendYears[spendYears.length-1]||2025);
+  const tyLeads=Array(12).fill(null), tySpend=Array(12).fill(null);
+  for(let m=1;m<=12;m++){const k=mkKey(TY,m); if(R.monthly[k])tyLeads[m-1]=R.monthly[k].total; if(spendStore[k]!=null)tySpend[m-1]=monTotal(k);}
+  const spendValid=[...Array(12).keys()].filter(i=>tySpend[i]!=null);
+  const peakSpendI=spendValid.length?spendValid.reduce((a,b)=>tySpend[b]>tySpend[a]?b:a):null;
+  const aligned=peakSpendI!=null&&Math.abs(peakSpendI-peakLeadI)<=1;
+
+  // ---- Spend/demand shares + per-month alignment status (target year) ----
+  const totLead=sum(tyLeads.map(v=>v||0))||1;
+  const posSpend=tySpend.map(v=>(v!=null&&v>0)?v:0);
+  const totSpend=sum(posSpend)||1;
+  const status=[...Array(12)].map((_,i)=>{
+    if(tyLeads[i]==null&&tySpend[i]==null)return{s:'na',delta:0,ls:0,ss:0};
+    const ls=(tyLeads[i]||0)/totLead, ss=posSpend[i]/totSpend, d=ls-ss;
+    return{s:d>=0.04?'under':d<=-0.04?'over':'ok',delta:d,ls,ss};
+  });
+  const misCount=status.filter(o=>o.s==='under'||o.s==='over').length;
+
+  // ---- Best / worst months for lead volume ----
+  const ranked=validM.map(i=>({i,avg:leadAvg[i],yrs:lCnt[i]})).sort((a,b)=>b.avg-a.avg);
+  const top3=ranked.slice(0,3), bot3=ranked.slice(-3).reverse();
+
+  // ---- Seasonal recommendations (drawn from demand-vs-spend gaps in the target year) ----
+  const ups=status.map((o,i)=>({i,...o})).filter(o=>o.s==='under'&&leadAvg[o.i]>=meanLead).sort((a,b)=>b.delta-a.delta).slice(0,3);
+  const downs=status.map((o,i)=>({i,...o})).filter(o=>o.s==='over').sort((a,b)=>a.delta-b.delta).slice(0,3);
+  const pc=(v)=>fmtPct(v*100,0);
+  const upCards=ups.map(o=>`<div class="r up"><div class="rt"><span class="tag">Increase</span>${MONTH_NAMES[o.i]}</div>
+    <p>${MONTH_NAMES[o.i]} averages <b>${Math.round(leadAvg[o.i])} leads</b> (${pc(o.ls)} of ${TY} demand) but drew only <b>${pc(o.ss)}</b> of ${TY} marketing spend${tySpend[o.i]<0?` — in fact net spend was <b>negative</b> (${fmtUSDfull(tySpend[o.i])}, an accrual reversal)`:''}. Weight budget toward this in-season month.</p></div>`).join("");
+  const downCards=downs.map(o=>`<div class="r down"><div class="rt"><span class="tag">Reduce</span>${MONTH_NAMES[o.i]}</div>
+    <p>${MONTH_NAMES[o.i]} absorbed <b>${pc(o.ss)}</b> of ${TY} spend yet drives only <b>${pc(o.ls)}</b> of demand (avg ${Math.round(leadAvg[o.i])} leads). Reallocate toward higher-demand months.</p></div>`).join("");
+  const recoHTML=(upCards+downCards)||`<div class="r hold"><div class="rt"><span class="tag">Hold</span>Spend tracks demand</div><p>No month is materially over- or under-funded relative to its share of ${TY} lead volume.</p></div>`;
+
+  const peakVsTrough=leadAvg[slowLeadI]>0?leadAvg[peakLeadI]/leadAvg[slowLeadI]:0;
+
+  p.innerHTML=`
+   <div class="tab-head"><h2>Seasonal Patterns</h2>
+     <p>Which calendar months drive the most inbound lead volume, and whether marketing spend is timed to those peaks. Lead volume is averaged by month of year across ${leadYears[0]}–${leadYears[leadYears.length-1]} (Export.xlsx); spend is the net Advertising &amp; Marketing booked per month in the ${TY} P&amp;L files. No estimation — figures are as recorded.</p></div>
+   <div class="kpis">
+     <div class="kpi"><div class="label">Peak Lead Month</div><div class="val g">${MONTH_NAMES[peakLeadI]}</div><div class="sub">avg ${Math.round(leadAvg[peakLeadI])} leads · ${lCnt[peakLeadI]} yr${lCnt[peakLeadI]===1?'':'s'} of data</div></div>
+     <div class="kpi bad"><div class="label">Slowest Lead Month</div><div class="val r">${MONTH_NAMES[slowLeadI]}</div><div class="sub">avg ${Math.round(leadAvg[slowLeadI])} leads · ${peakVsTrough?peakVsTrough.toFixed(1)+'× below peak':''}</div></div>
+     <div class="kpi alt"><div class="label">Peak Spend Month (${TY})</div><div class="val">${peakSpendI!=null?MONTH_NAMES[peakSpendI]:'—'}</div><div class="sub">${peakSpendI!=null?fmtUSDfull(tySpend[peakSpendI])+' booked':'no spend data'}</div></div>
+     <div class="kpi ${aligned?'':'warn'}"><div class="label">Peak Spend Aligned?</div><div class="val ${aligned?'g':'r'}">${aligned?'Aligned':'Misaligned'}</div><div class="sub">${peakSpendI!=null?`spend peaks in ${MONTH_NAMES[peakSpendI]}, leads in ${MONTH_NAMES[peakLeadI]}`:'—'}</div></div>
+   </div>
+
+   <div class="card">
+     <h3>Monthly Lead Volume by Month of Year</h3><p class="csub">Average leads per calendar month across ${leadYears[0]}–${leadYears[leadYears.length-1]} — the underlying seasonal demand curve</p>
+     <div id="soYear"></div>
+     <div class="legend">
+       <div class="item"><span class="swatch" style="background:#00e676"></span>In-season (≥ average of ${Math.round(meanLead)})</div>
+       <div class="item"><span class="swatch" style="background:#3ba7ff"></span>Off-season (below average)</div>
+     </div>
+     <div class="note"><b>Read:</b> Demand is front-loaded — <b>${MONTH_NAMES[peakLeadI]}</b> (avg ${Math.round(leadAvg[peakLeadI])}) runs ${peakVsTrough?`<b>${peakVsTrough.toFixed(1)}×</b> the`:'well above the'} slowest month, <b>${MONTH_NAMES[slowLeadI]}</b> (avg ${Math.round(leadAvg[slowLeadI])}). The first quarter and year-end carry the year; mid-summer is the trough. Months are averaged over the years each appears in the data (${leadYears.length} year${leadYears.length===1?'':'s'} total), so partial recent months are included exactly as recorded.</div>
+   </div>
+
+   <div class="card">
+     <h3>Spend vs Lead Volume Alignment · ${TY}</h3><p class="csub">Monthly marketing spend over the same months' lead volume — shaded bands mark months where spend and demand pull apart</p>
+     <div id="soAlign"></div>
+     <div class="legend">
+       <div class="item"><span class="swatch" style="background:rgba(255,82,82,.5)"></span>Overspent vs demand</div>
+       <div class="item"><span class="swatch" style="background:rgba(0,230,118,.5)"></span>Underspent vs demand</div>
+       <div class="item"><span class="swatch" style="background:#00e676"></span>Spend</div>
+       <div class="item"><span class="swatch" style="background:#3ba7ff"></span>Leads</div>
+     </div>
+     <div class="note"><b>Read:</b> ${misCount} of ${spendValid.length} funded months are misaligned. ${peakSpendI!=null&&!aligned?`The heaviest spend lands in <b>${MONTH_NAMES[peakSpendI]}</b> (${fmtUSDfull(tySpend[peakSpendI])}), well after the <b>${MONTH_NAMES[peakLeadI]}</b> demand peak.`:''} Several negative bars are accrual reversals booked into single months, not genuine budget cuts — the ${TY} P&amp;L records them as net figures.</div>
+   </div>
+
+   <div class="grid2">
+     <div class="card"><h3>Best Months for Lead Volume</h3><p class="csub">Top 3 calendar months by average lead count</p><div id="soTop"></div></div>
+     <div class="card"><h3>Worst Months for Lead Volume</h3><p class="csub">Bottom 3 calendar months by average lead count</p><div id="soBot"></div></div>
+   </div>
+
+   <div class="card">
+     <h3>Seasonal Recommendations</h3><p class="csub">Where ${TY} spend is out of step with historical demand — generated from the gap between each month's share of leads and share of spend</p>
+     <div class="reco" style="margin-top:6px">${recoHTML}</div>
+   </div>
+
+   <div class="card">
+     <h3>Monthly Detail</h3><p class="csub">Every calendar month: average demand, and ${TY} leads vs spend with alignment flag</p>
+     <div class="tbl-scroll"><table class="tbl">
+       <thead><tr><th>Month</th><th>Avg Leads</th><th>Years</th><th>${TY} Leads</th><th>${TY} Spend</th><th>Demand Share</th><th>Spend Share</th><th>Alignment</th></tr></thead>
+       <tbody>${MONTH_NAMES.map((mn,i)=>{const st=status[i];
+         const pill=st.s==='over'?'<span class="pill bad">Overspent</span>':st.s==='under'?'<span class="pill good">Underspent</span>':st.s==='ok'?'<span class="pill mid">Aligned</span>':'—';
+         return `<tr>
+           <td>${mn}</td>
+           <td class="${leadAvg[i]>=meanLead?'pos':''}">${lCnt[i]?fmtNum(Math.round(leadAvg[i])):'—'}</td>
+           <td>${lCnt[i]||'—'}</td>
+           <td>${tyLeads[i]==null?'—':fmtNum(tyLeads[i])}</td>
+           <td class="${tySpend[i]<0?'neg':''}">${tySpend[i]==null?'—':fmtUSDfull(tySpend[i])}</td>
+           <td>${tyLeads[i]==null?'—':pc(st.ls)}</td>
+           <td>${tySpend[i]==null?'—':pc(st.ss)}</td>
+           <td>${pill}</td></tr>`;}).join("")}
+       </tbody>
+     </table></div>
+   </div>`;
+
+  // Month-of-year average lead volume
+  catBarChart(document.getElementById("soYear"),{
+    cats:MONTH_NAMES.map((mn,i)=>({label:mn,full:mn+" · avg of "+lCnt[i]+" year"+(lCnt[i]===1?'':'s'),
+      value:leadAvg[i], color:lCnt[i]===0?'#3a3a3a':leadAvg[i]>=meanLead?'#00e676':'#3ba7ff', _yrs:lCnt[i]})),
+    yFmt:fmtNum, valLabel:c=>c._yrs?fmtNum(Math.round(c.value)):'—',
+    tipRows:c=>`<div class="tt-row"><span class="k">Avg leads</span><span class="v">${c._yrs?fmtNum(Math.round(c.value)):'—'}</span></div><div class="tt-row"><span class="k">Years averaged</span><span class="v">${c._yrs||'—'}</span></div>`,
+    height:300});
+
+  // Spend-vs-lead alignment dual panel
+  dualPanelChart(document.getElementById("soAlign"),{labels:MONTH_NAMES,spend:tySpend,leads:tyLeads,status,tyLabel:""+TY});
+
+  // Best / worst months
+  hBarChart(document.getElementById("soTop"),{items:top3.map(o=>({name:MONTH_NAMES[o.i],value:o.avg,color:'#00e676',suffix:' leads'})),valFmt:v=>fmtNum(Math.round(v))});
+  hBarChart(document.getElementById("soBot"),{items:bot3.map(o=>({name:MONTH_NAMES[o.i],value:o.avg,color:'#ff6b8a',suffix:' leads'})),valFmt:v=>fmtNum(Math.round(v))});
+}
+
 // ============================== TAB NAV ==============================
 const TABS=[
   {t:"Fund Overview",b:buildFund},
@@ -952,6 +1131,7 @@ const TABS=[
   {t:"Lead Volume vs Spend",b:buildLeadsSpend},
   {t:"Channel Performance",b:buildChannels},
   {t:"Response Time",b:buildResponse},
+  {t:"Seasonal Patterns",b:buildSeasonal},
   {t:"Cost Per Conversion",b:buildCPC}
 ];
 const nav=document.getElementById("tabs");
