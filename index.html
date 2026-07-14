@@ -182,6 +182,7 @@
   <section class="tab-panel" id="tab3"></section>
   <section class="tab-panel" id="tab5"></section>
   <section class="tab-panel" id="tab6"></section>
+  <section class="tab-panel" id="tab7"></section>
   <section class="tab-panel" id="tab4"></section>
 </main>
 
@@ -242,6 +243,23 @@ const BASE_TOTAL_LEADS=3192;
 const BASE_CLOSED_DEALS=17;
 const INDUSTRY_BENCHMARK=2.5; // % conversion
 
+// ---- Geographic: leads by U.S. state (Export.xlsx, "State / Province"), sold = Lead Status "Closed Lead- Sold" ----
+// The 5 regions mirror the standard Census-style grouping used across the deck. Canadian provinces and
+// blank-state records are counted separately (BASE_STATE_META) and excluded from the state-level views.
+const STATE_REGIONS={
+  Northeast:["Connecticut","Maine","Massachusetts","New Hampshire","Rhode Island","Vermont","New York","New Jersey","Pennsylvania","Maryland","Delaware","District of Columbia"],
+  Southeast:["Virginia","West Virginia","Kentucky","Tennessee","North Carolina","South Carolina","Georgia","Florida","Alabama","Mississippi","Arkansas","Louisiana"],
+  Midwest:["Ohio","Indiana","Illinois","Michigan","Wisconsin","Minnesota","Iowa","Missouri","North Dakota","South Dakota","Nebraska","Kansas"],
+  Southwest:["Texas","Oklahoma","New Mexico","Arizona"],
+  West:["Colorado","Wyoming","Montana","Idaho","Utah","Nevada","California","Oregon","Washington","Alaska","Hawaii"]
+};
+const REGION_ORDER=["Northeast","Southeast","Midwest","Southwest","West"];
+const REGION_COLORS={Northeast:"#3ba7ff",Southeast:"#00e676",Midwest:"#ffb020",Southwest:"#ff8c42",West:"#b37feb"};
+const STATE_TO_REGION={}; Object.entries(STATE_REGIONS).forEach(([r,ss])=>ss.forEach(s=>{STATE_TO_REGION[s]=r;}));
+// {s:state, r:region, l:leads, w:closed-sold}, US states with ≥1 lead, sorted by leads desc
+const BASE_STATES=[{s:"Texas",r:"Southwest",l:270,w:1},{s:"Florida",r:"Southeast",l:226,w:3},{s:"California",r:"West",l:221,w:0},{s:"Michigan",r:"Midwest",l:171,w:1},{s:"Illinois",r:"Midwest",l:164,w:2},{s:"Massachusetts",r:"Northeast",l:116,w:0},{s:"North Carolina",r:"Southeast",l:116,w:0},{s:"New York",r:"Northeast",l:114,w:0},{s:"Georgia",r:"Southeast",l:98,w:0},{s:"Maryland",r:"Northeast",l:98,w:0},{s:"Missouri",r:"Midwest",l:86,w:0},{s:"Virginia",r:"Southeast",l:85,w:1},{s:"Pennsylvania",r:"Northeast",l:80,w:0},{s:"Ohio",r:"Midwest",l:78,w:1},{s:"Tennessee",r:"Southeast",l:69,w:0},{s:"New Jersey",r:"Northeast",l:64,w:0},{s:"Colorado",r:"West",l:63,w:0},{s:"Arizona",r:"Southwest",l:61,w:0},{s:"Indiana",r:"Midwest",l:54,w:0},{s:"South Carolina",r:"Southeast",l:49,w:0},{s:"Wisconsin",r:"Midwest",l:47,w:1},{s:"Alabama",r:"Southeast",l:46,w:0},{s:"Washington",r:"West",l:44,w:0},{s:"Minnesota",r:"Midwest",l:38,w:0},{s:"Nevada",r:"West",l:31,w:1},{s:"New Hampshire",r:"Northeast",l:31,w:0},{s:"Oregon",r:"West",l:31,w:1},{s:"Kansas",r:"Midwest",l:29,w:0},{s:"Utah",r:"West",l:28,w:0},{s:"Idaho",r:"West",l:27,w:0},{s:"Arkansas",r:"Southeast",l:26,w:0},{s:"Kentucky",r:"Southeast",l:22,w:0},{s:"Connecticut",r:"Northeast",l:21,w:0},{s:"Mississippi",r:"Southeast",l:20,w:0},{s:"Oklahoma",r:"Southwest",l:20,w:0},{s:"Delaware",r:"Northeast",l:19,w:0},{s:"Louisiana",r:"Southeast",l:18,w:0},{s:"New Mexico",r:"Southwest",l:14,w:0},{s:"Nebraska",r:"Midwest",l:13,w:0},{s:"Iowa",r:"Midwest",l:12,w:1},{s:"Montana",r:"West",l:10,w:0},{s:"Maine",r:"Northeast",l:9,w:0},{s:"North Dakota",r:"Midwest",l:8,w:0},{s:"Rhode Island",r:"Northeast",l:8,w:0},{s:"South Dakota",r:"Midwest",l:7,w:0},{s:"Alaska",r:"West",l:5,w:0},{s:"West Virginia",r:"Southeast",l:5,w:0},{s:"Wyoming",r:"West",l:4,w:0},{s:"Hawaii",r:"West",l:3,w:0},{s:"District of Columbia",r:"Northeast",l:2,w:0},{s:"Vermont",r:"Northeast",l:1,w:0}];
+const BASE_STATE_META={nonUsLeads:138,nonUsCount:7,blankLeads:172,total:3192}; // Canadian provinces + no-state records
+
 // Source: Export.xlsx — "First Contacted" minus "Inquiry Date" (whole days, floored at 0) for
 // every lead. "Never contacted" = blank First Contacted. Sums/counts are stored raw so the
 // displayed averages match the workbook exactly. Buckets: 0–7, 8–14, 15–30, 31–60, 60+ days.
@@ -270,6 +288,8 @@ const BASE_RESPONSE={
 let MONTHS, MONTH_KEYS, ENTITIES, ENTITY_COLORS, LEADS_2025, SPEND_RANGE, SINGLE_YEAR;
 let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, TOTAL_LEADS, CLOSED_DEALS;
 let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
+let STATES=[];      // [{s,r,l,w}] US states with ≥1 lead, sorted by leads desc
+let STATE_META={};  // {usLeads,usWon,nonUsLeads,nonUsCount,blankLeads,total}
 
 // Canonical stores that survive across uploads
 let spendStore = {};              // "YYYY-MM" -> { entityName: value }
@@ -311,6 +331,21 @@ function applySpend(){
   });
 }
 
+// ---- Roll CRM records up into the per-state shape (mirrors BASE_STATES / BASE_STATE_META) ----
+function computeStates(recs){
+  const m={}; let nonUsLeads=0, nonUs=new Set(), blank=0, usLeads=0, usWon=0;
+  recs.forEach(r=>{
+    const st=(r.state||"").trim();
+    if(!st){ blank++; return; }
+    if(STATE_TO_REGION[st]){
+      const o=m[st]||(m[st]={s:st,r:STATE_TO_REGION[st],l:0,w:0});
+      o.l++; usLeads++; if(r.sold){ o.w++; usWon++; }
+    } else { nonUsLeads++; nonUs.add(st); }
+  });
+  STATES=Object.values(m).sort((a,b)=>b.l-a.l||a.s.localeCompare(b.s));
+  STATE_META={usLeads,usWon,nonUsLeads,nonUsCount:nonUs.size,blankLeads:blank,total:recs.length};
+}
+
 // ---- Derive lead-based working vars from crmRecords (or restore embedded) ----
 function applyLeads(){
   if(crmUploaded){
@@ -337,6 +372,7 @@ function applyLeads(){
     DEAD_BY_CHANNEL=dead;
     TOTAL_LEADS=recs.length;
     LEADS_2025=MONTH_KEYS.map(k=>leadsByKey[k]||0);
+    computeStates(recs);
   } else {
     LEAD_STATUS=clone(BASE_LEAD_STATUS);
     CHANNELS=clone(BASE_CHANNELS);
@@ -348,6 +384,8 @@ function applyLeads(){
     // map embedded 2025 monthly leads onto the current month axis
     const baseByKey={}; for(let m=0;m<12;m++)baseByKey[mkKey(2025,m+1)]=BASE_LEADS_2025[m];
     LEADS_2025=MONTH_KEYS.map(k=>baseByKey[k]!=null?baseByKey[k]:0);
+    STATES=clone(BASE_STATES);
+    STATE_META=Object.assign({usLeads:sum(BASE_STATES.map(s=>s.l)),usWon:sum(BASE_STATES.map(s=>s.w))},BASE_STATE_META);
   }
 }
 
@@ -1124,6 +1162,119 @@ function buildSeasonal(){
   hBarChart(document.getElementById("soBot"),{items:bot3.map(o=>({name:MONTH_NAMES[o.i],value:o.avg,color:'#ff6b8a',suffix:' leads'})),valFmt:v=>fmtNum(Math.round(v))});
 }
 
+// ---- CHART: conversion rate by state (converting states + high-volume zero-conversion "misses") ----
+function convStateChart(el,{conv,missed}){
+  const maxRate=Math.max(...conv.map(o=>o.rate),0.0001);
+  const row=(o,type)=>{
+    const pct=type==='conv'?Math.max(3,o.rate/maxRate*100):0;
+    const col=type==='conv'?'#00e676':'#ff5252';
+    const lab=type==='conv'?`${o.w}/${o.l} · ${o.rate.toFixed(2)}%`:`${fmtNum(o.l)} leads · 0`;
+    return `<div style="display:flex;align-items:center;gap:12px">
+      <div style="width:118px;flex:none;font-size:12.5px;color:var(--muted);text-align:right" title="${o.s}">${o.s}</div>
+      <div style="flex:1;background:var(--surface3);border-radius:6px;height:20px;position:relative;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${col};border-radius:6px;min-width:${type==='conv'?2:0}px;opacity:.92"></div>
+        ${type==='miss'?`<div style="position:absolute;inset:0;display:flex;align-items:center;padding-left:9px;font-size:10.5px;letter-spacing:.3px;color:var(--loss)">missed opportunity</div>`:''}
+      </div>
+      <div style="width:112px;flex:none;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;color:${col}">${lab}</div>
+    </div>`;
+  };
+  let g='<div style="display:flex;flex-direction:column;gap:9px">';
+  g+=conv.map(o=>row(o,'conv')).join('');
+  if(missed.length){
+    g+=`<div style="margin:8px 0 1px;font-size:10.5px;text-transform:uppercase;letter-spacing:.6px;color:var(--dim)">Highest-volume states with zero conversions</div>`;
+    g+=missed.map(o=>row(o,'miss')).join('');
+  }
+  g+='</div>';
+  el.innerHTML=g;
+}
+
+// ---- Sortable State Performance table (state re-renders in place, preserves scroll) ----
+let GEO_SORT={key:'l',dir:-1};
+function geoSortBy(k){ if(GEO_SORT.key===k) GEO_SORT.dir*=-1; else GEO_SORT={key:k,dir:k==='s'?1:-1}; renderGeoTable(); }
+function renderGeoTable(){
+  const tb=document.getElementById('geoTbody'); if(!tb) return;
+  const usLeads=STATE_META.usLeads||1, n=STATES.length||1, avg=usLeads/n;
+  const val={s:o=>o.s, l:o=>o.l, w:o=>o.w, rate:o=>o.l?o.w/o.l:0, pct:o=>o.l/usLeads, eff:o=>o.l};
+  const f=val[GEO_SORT.key]||val.l;
+  const rows=[...STATES].sort((a,b)=>{const av=f(a),bv=f(b);
+    if(typeof av==='string') return GEO_SORT.dir*av.localeCompare(bv);
+    return GEO_SORT.dir*(av-bv)||(b.l-a.l); });
+  const effL=l=> l>=avg?['High','good']:l>=avg/2?['Medium','mid']:['Low','bad'];
+  tb.innerHTML=rows.map(o=>{ const [el,ec]=effL(o.l); const rate=o.l?o.w/o.l*100:0;
+    return `<tr><td>${o.s}</td><td>${fmtNum(o.l)}</td><td>${o.w}</td><td>${rate>0?fmtPct(rate,2):'—'}</td><td>${fmtPct(o.l/usLeads*100,1)}</td><td><span class="pill ${ec}">${el}</span></td></tr>`; }).join('');
+  document.querySelectorAll('#geoTable th[data-k]').forEach(th=>{
+    const c=th.querySelector('.cS'); if(c) c.textContent = GEO_SORT.key===th.dataset.k ? (GEO_SORT.dir<0?' ▾':' ▴') : '';
+  });
+}
+
+// ---- TAB: GEOGRAPHIC (leads by state relative to marketing reach) ----
+function buildGeographic(){
+  const p=document.getElementById("tab7");
+  const S=STATES, M=STATE_META;
+  if(!S.length){ p.innerHTML=`<div class="tab-head"><h2>Geographic Performance</h2><p>No state-level lead data available.</p></div>`; return; }
+  const usLeads=M.usLeads, n=S.length, avg=usLeads/n;
+  const conv=o=>o.l?o.w/o.l*100:0;
+  const topVol=S[0];
+  const topConv=S.reduce((a,b)=>{ const ca=conv(a),cb=conv(b); return (cb>ca||(cb===ca&&b.l>a.l))?b:a; });
+  const eff=(topVol.l/avg);
+  const top10=S.slice(0,10);
+  const converting=S.filter(o=>o.w>0).map(o=>({...o,rate:conv(o)})).sort((a,b)=>b.rate-a.rate||b.l-a.l);
+  const missed=S.filter(o=>o.w===0&&o.l>=avg).sort((a,b)=>b.l-a.l).slice(0,8);
+  const regAgg=REGION_ORDER.map(r=>{ const ss=S.filter(o=>o.r===r); const l=sum(ss.map(o=>o.l)),w=sum(ss.map(o=>o.w));
+    return {r,l,w,rate:l?w/l*100:0,states:ss.length}; }).filter(o=>o.l>0).sort((a,b)=>b.l-a.l);
+  const topReg=regAgg[0];
+
+  p.innerHTML=`
+   <div class="tab-head"><h2>Geographic Performance</h2>
+     <p>Which states generate franchise leads and which of those leads actually convert — all figures from Export.xlsx (lead "State / Province"). Marketing spend is a single national fund and is <b>not tracked by state</b>, so efficiency here is measured as a state's lead volume against the ${fmtNum(Math.round(avg))}-lead network average rather than an estimated per-state cost.</p></div>
+   <div class="kpis">
+     <div class="kpi"><div class="label">Top State · Lead Volume</div><div class="val g">${topVol.s}</div><div class="sub">${fmtNum(topVol.l)} leads · ${fmtPct(topVol.l/usLeads*100,1)} of U.S. leads</div></div>
+     <div class="kpi alt"><div class="label">Top State · Conversion Rate</div><div class="val">${topConv.s}</div><div class="sub">${fmtPct(conv(topConv),1)} · ${topConv.w} of ${fmtNum(topConv.l)} leads closed</div></div>
+     <div class="kpi pur"><div class="label">Most Efficient State</div><div class="val">${topVol.s}</div><div class="sub">${eff.toFixed(1)}× the ${fmtNum(Math.round(avg))}-lead avg state · best return on shared spend</div></div>
+     <div class="kpi warn"><div class="label">States With ≥1 Lead</div><div class="val">${n}</div><div class="sub">U.S. states + DC represented</div></div>
+   </div>
+
+   <div class="card"><h3>Top 10 States by Lead Volume</h3><p class="csub">Ranked by inbound leads, colored by region, with each state's lead-to-deal conversion rate labeled</p>
+     <div id="geoTop10"></div>
+     <div class="legend">${regAgg.map(o=>`<div class="item"><span class="swatch" style="background:${REGION_COLORS[o.r]}"></span>${o.r}</div>`).join("")}</div>
+   </div>
+
+   <div class="card"><h3>Conversion Rate by State</h3><p class="csub">The ${converting.length} states that have actually closed a deal — followed by the largest lead pools that converted <b>nobody</b></p>
+     <div id="geoConv"></div>
+     <div class="note"><b>Read:</b> Only ${converting.length} of ${n} states have ever closed a franchise. Meanwhile <b>California</b> (${fmtNum(S.find(o=>o.s==='California')?.l||0)} leads) and <b>Texas</b> (${fmtNum(topVol.l)} leads, just ${topVol.w} closed) sit at the top of the funnel yet convert at essentially zero — the biggest missed opportunities in the network. High volume without conversion points to a follow-up / speed-to-lead gap, not a demand gap.</div>
+   </div>
+
+   <div class="grid2">
+     <div class="card"><h3>Regional Lead Distribution</h3><p class="csub">Leads by region (${REGION_ORDER.join(" · ")}) with conversion rate labeled</p><div id="geoReg"></div></div>
+     <div class="card"><h3>Region Detail</h3><p class="csub">${topReg.r} leads the network with ${fmtNum(topReg.l)} leads</p>
+       <div class="tbl-scroll"><table class="tbl">
+         <thead><tr><th>Region</th><th>States</th><th>Leads</th><th>% of U.S.</th><th>Converted</th><th>Conv Rate</th></tr></thead>
+         <tbody>${regAgg.map(o=>`<tr><td><span class="chip"><span class="sw" style="background:${REGION_COLORS[o.r]}"></span>${o.r}</span></td><td>${o.states}</td><td>${fmtNum(o.l)}</td><td>${fmtPct(o.l/usLeads*100,1)}</td><td>${o.w}</td><td>${o.rate>0?fmtPct(o.rate,2):'—'}</td></tr>`).join("")}</tbody>
+       </table></div>
+     </div>
+   </div>
+
+   <div class="card"><h3>State Performance</h3><p class="csub">All ${n} states with at least one lead — click any column header to sort. Efficiency rating reflects lead volume vs the ${fmtNum(Math.round(avg))}-lead network average (High ≥ avg · Medium ≥ ½ avg · Low below)</p>
+     <div class="tbl-scroll"><table class="tbl" id="geoTable">
+       <thead><tr>
+         <th data-k="s" onclick="geoSortBy('s')" style="cursor:pointer">State<span class="cS"></span></th>
+         <th data-k="l" onclick="geoSortBy('l')" style="cursor:pointer">Total Leads<span class="cS"></span></th>
+         <th data-k="w" onclick="geoSortBy('w')" style="cursor:pointer">Converted<span class="cS"></span></th>
+         <th data-k="rate" onclick="geoSortBy('rate')" style="cursor:pointer">Conversion Rate<span class="cS"></span></th>
+         <th data-k="pct" onclick="geoSortBy('pct')" style="cursor:pointer">% of Total Leads<span class="cS"></span></th>
+         <th data-k="eff" onclick="geoSortBy('eff')" style="cursor:pointer">Efficiency Rating<span class="cS"></span></th>
+       </tr></thead>
+       <tbody id="geoTbody"></tbody>
+     </table></div>
+     <div class="note">Conversion = leads with Lead Status "Closed Lead- Sold" ÷ total leads for that state. "% of Total Leads" is share of the ${fmtNum(usLeads)} U.S. leads. Excluded from this view: ${fmtNum(M.nonUsLeads)} leads across ${M.nonUsCount} Canadian province${M.nonUsCount===1?'':'s'} (0 closed) and ${fmtNum(M.blankLeads)} records with no state recorded.</div>
+   </div>`;
+
+  hBarChart(document.getElementById("geoTop10"),{items:top10.map(o=>({name:o.s,value:o.l,color:REGION_COLORS[o.r],suffix:` · ${conv(o).toFixed(1)}%`})),valFmt:v=>fmtNum(v)});
+  convStateChart(document.getElementById("geoConv"),{conv:converting,missed});
+  hBarChart(document.getElementById("geoReg"),{items:regAgg.map(o=>({name:o.r,value:o.l,color:REGION_COLORS[o.r],suffix:` · ${o.rate.toFixed(2)}%`})),valFmt:v=>fmtNum(v)});
+  renderGeoTable();
+}
+
 // ============================== TAB NAV ==============================
 const TABS=[
   {t:"Fund Overview",b:buildFund},
@@ -1132,6 +1283,7 @@ const TABS=[
   {t:"Channel Performance",b:buildChannels},
   {t:"Response Time",b:buildResponse},
   {t:"Seasonal Patterns",b:buildSeasonal},
+  {t:"Geographic",b:buildGeographic},
   {t:"Cost Per Conversion",b:buildCPC}
 ];
 const nav=document.getElementById("tabs");
@@ -1331,7 +1483,7 @@ function statusBucket(s){ s=(s||"").trim();
 // Parse Export.xlsx into deduped records, adding into crmRecords. Returns {added, duplicate, total}.
 function parseCRM(sst, sheetXml){
   let header=null, col={}, added=0, dup=0, seen=0;
-  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date","First Contacted"];
+  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date","First Contacted","State / Province"];
   eachRow(sheetXml,sst,(n,cells)=>{
     if(!header){ header=cells;
       want.forEach(w=>{ for(let i=0;i<header.length;i++){ if(String(header[i]||"").trim()===w){ col[w]=i; break; } } });
@@ -1355,7 +1507,8 @@ function parseCRM(sst, sheetXml){
       sold:String(status||"").trim()==="Closed Lead- Sold",
       reasonGroup:groupReason(cells[col["Lead Reason"]]),
       channel:classifyChannel(cells[col["Lead Source Category"]],cells[col["Lead Source Details"]],cells[col["Other Lead Sources"]]),
-      awardYear:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).year||null
+      awardYear:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).year||null,
+      state:String(cells[col["State / Province"]]||"").trim()
     };
     if(crmRecords.has(key)) dup++; else added++;
     crmRecords.set(key,rec);
