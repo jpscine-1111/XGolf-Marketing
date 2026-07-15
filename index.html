@@ -572,6 +572,45 @@ function barChart(el,{labels,data,color="#00e676",negColor="#ff5252",yFmt=fmtUSD
   });
 }
 
+// ============================== CHART: GROUPED BARS (per-cluster normalized) ==============================
+// One cluster per metric, one bar per series (e.g. year). The metrics live on very different scales
+// (leads in the thousands, deals in single digits, rates < 1%, cost in the hundreds), so each cluster
+// is normalized to its own maximum and the real value is printed above every bar. There is no shared
+// y-axis; the bar height only encodes the within-cluster comparison. Tooltips show the formatted value.
+function groupedBar(el,{groups,series,height=360}){
+  const W=760,H=height,padL=20,padR=20,padT=30,padB=52;
+  const xw=W-padL-padR, yh=H-padT-padB;
+  const G=groups.length, B=series.length;
+  const slotGap=0.30;                       // fraction of a group slot left empty between clusters
+  const slot=xw/G, groupW=slot*(1-slotGap), bw=groupW/B;
+  let g=`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  g+=`<line class="zero" x1="${padL}" y1="${padT+yh}" x2="${W-padR}" y2="${padT+yh}"/>`;
+  groups.forEach((grp,gi)=>{
+    const gx=padL+slot*gi+(slot-groupW)/2, cx=padL+slot*gi+slot/2;
+    const mx=Math.max(...grp.values,1e-9);
+    grp.values.forEach((v,bi)=>{
+      const h=v<=0?0.5:yh*(v/mx);
+      const x=gx+bw*bi, y=padT+yh-h;
+      g+=`<rect class="gbar" data-g="${gi}" data-b="${bi}" x="${x+bw*0.12}" y="${y}" width="${bw*0.76}" height="${Math.max(h,0.5)}" rx="3" fill="${series[bi].color}" opacity="0.9"/>`;
+      g+=`<text x="${x+bw/2}" y="${y-6}" text-anchor="middle" style="fill:var(--muted);font-size:10px;font-weight:600;font-variant-numeric:tabular-nums">${grp.fmt(v)}</text>`;
+    });
+    g+=`<text x="${cx}" y="${H-14}" text-anchor="middle" style="fill:var(--text);font-size:12.5px;font-weight:600">${grp.label}</text>`;
+  });
+  g+='</svg>';
+  el.innerHTML=g;el.classList.add("chart-wrap");
+  const svg=el.querySelector("svg"),tip=attachTip(el);
+  svg.querySelectorAll(".gbar").forEach(b=>{
+    b.addEventListener("mouseenter",()=>b.setAttribute("opacity","1"));
+    b.addEventListener("mouseleave",()=>{b.setAttribute("opacity","0.9");tip.style.opacity=0;});
+    b.addEventListener("mousemove",e=>{
+      const gi=+b.dataset.g,bi=+b.dataset.b,grp=groups[gi],r=svg.getBoundingClientRect();
+      tip.innerHTML=`<div class="tt-title">${grp.label}</div><div class="tt-row"><span class="k"><span class="sw" style="background:${series[bi].color}"></span>${series[bi].name}</span><span class="v">${grp.fmt(grp.values[bi])}</span></div>`;
+      tip.style.opacity=1;
+      moveTip(tip,el,(e.clientX-r.left)/r.width*el.clientWidth,(e.clientY-r.top)/r.height*el.clientHeight);
+    });
+  });
+}
+
 // ============================== CHART: HORIZONTAL BARS ==============================
 function hBarChart(el,{items,valFmt=fmtUSDfull,maxLabel=""}){
   const max=Math.max(...items.map(i=>i.value),0.0001);
@@ -702,6 +741,29 @@ function buildFund(){
   const pctOfRev=FUND.marketingFundRevenue.map((r,i)=>r/FUND.totalRevenue[i]*100);
   const totalCollected=sum(FUND.marketingFundRevenue), totalSpent=sum(FUND.advertisingMarketing);
   const lastGap=gap[gap.length-1];
+  // ---- Year-over-Year comparison (2023 vs 2024 vs 2025) ----
+  // Leads and closed deals come from the live CRM aggregates; annual spend from the fund income
+  // statement (FUND.advertisingMarketing). Cost per lead is estimated as annual spend ÷ annual leads.
+  const yoyYears=[2023,2024,2025];
+  const yoyLeads=yoyYears.map(y=>(LEADS_BY_YEAR&&LEADS_BY_YEAR[y])||0);
+  const yoyDeals=yoyYears.map(y=>(DEALS_BY_AWARD_YEAR&&DEALS_BY_AWARD_YEAR[y])||0);
+  const yoySpend=yoyYears.map(y=>{const idx=FUND.years.indexOf(y);return idx>=0?FUND.advertisingMarketing[idx]:0;});
+  const yoyConv=yoyYears.map((y,i)=>yoyLeads[i]?yoyDeals[i]/yoyLeads[i]*100:0);
+  const yoyCPL=yoyYears.map((y,i)=>yoyLeads[i]?yoySpend[i]/yoyLeads[i]:0);
+  const yoyMetrics=[
+    {name:"Total Leads",     vals:yoyLeads, fmt:v=>fmtNum(Math.round(v)), better:"up"},
+    {name:"Closed Deals",    vals:yoyDeals, fmt:v=>fmtNum(Math.round(v)), better:"up"},
+    {name:"Conversion Rate", vals:yoyConv,  fmt:v=>fmtPct(v,2),           better:"up"},
+    {name:"Est. Cost / Lead",vals:yoyCPL,   fmt:v=>fmtUSDfull(v),         better:"down"}
+  ];
+  const yoySeries=[{name:"2023",color:"#3ba7ff"},{name:"2024",color:"#b37feb"},{name:"2025",color:"#00e676"}];
+  // % change cell — colored by whether the move is in the metric's "better" direction, not by raw sign
+  const yoyChg=(base,cur,better)=>{
+    if(base==null||base===0||cur==null)return `<td style="color:var(--dim)">—</td>`;
+    const d=(cur-base)/base*100, good=better==="up"?d>0:d<0;
+    const cls=Math.abs(d)<0.05?'':(good?'pos':'neg'), arrow=d>0.05?'▲':d<-0.05?'▼':'';
+    return `<td class="${cls}" style="font-variant-numeric:tabular-nums">${arrow} ${d>0?'+':''}${d.toFixed(1)}%</td>`;
+  };
   p.innerHTML=`
    <div class="tab-head"><h2>Marketing Fund Overview</h2>
      <p>Consolidated Marketing Fund revenue (collected from franchisees) versus Advertising &amp; Marketing spend, 2020–2025. Source: XGA Consolidated Income Statement.</p></div>
@@ -735,11 +797,33 @@ function buildFund(){
          <td>${fmtUSDfull(FUND.totalRevenue[i])}</td><td>${fmtPct(pctOfRev[i])}</td></tr>`).join("")}</tbody>
      </table></div>
      <div class="note"><b>Read:</b> Through 2020–2024 the fund ran a structural deficit — X Golf America spent more on marketing than franchisees contributed, peaking at a ${fmtUSD(Math.min(...gap))} gap in 2023. In 2025 collections rose to ${fmtUSD(FUND.marketingFundRevenue[5])} while spend was cut to ${fmtUSD(FUND.advertisingMarketing[5])}, producing the first surplus (+${fmtUSD(lastGap)}) and lifting the fund to ${fmtPct(pctOfRev[5])} of total revenue.</div>
+   </div>
+   <div class="card">
+     <h3>Year-over-Year Comparison · 2023 · 2024 · 2025</h3>
+     <p class="csub">Four key funnel metrics side by side by year. Each cluster is scaled to its own range — bar heights compare years within a metric, not across metrics.</p>
+     <div id="yoyBars"></div>
+     <div class="legend">
+       <div class="item"><span class="swatch" style="background:#3ba7ff"></span>2023</div>
+       <div class="item"><span class="swatch" style="background:#b37feb"></span>2024</div>
+       <div class="item"><span class="swatch" style="background:#00e676"></span>2025</div>
+     </div>
+     <div class="tbl-scroll" style="margin-top:20px"><table class="tbl">
+       <thead><tr><th>Metric</th><th>2023</th><th>2024</th><th>2025</th><th>Δ '23→'24</th><th>Δ '24→'25</th></tr></thead>
+       <tbody>${yoyMetrics.map(m=>`<tr>
+         <td style="font-weight:600">${m.name}</td>
+         <td style="font-variant-numeric:tabular-nums">${m.fmt(m.vals[0])}</td>
+         <td style="font-variant-numeric:tabular-nums">${m.fmt(m.vals[1])}</td>
+         <td style="font-variant-numeric:tabular-nums;font-weight:700">${m.fmt(m.vals[2])}</td>
+         ${yoyChg(m.vals[0],m.vals[1],m.better)}${yoyChg(m.vals[1],m.vals[2],m.better)}
+       </tr>`).join("")}</tbody>
+     </table></div>
+     <div class="note"><b>Read:</b> Lead volume grew steadily — ${fmtNum(yoyLeads[0])} (2023) → ${fmtNum(yoyLeads[1])} (2024) → ${fmtNum(yoyLeads[2])} (2025) — and estimated cost per lead fell from ${fmtUSDfull(yoyCPL[0])} to ${fmtUSDfull(yoyCPL[2])} as spend was cut against a larger lead base. Conversion peaked in 2024 at ${fmtPct(yoyConv[1],2)} (${yoyDeals[1]} deals) before easing to ${fmtPct(yoyConv[2],2)} in 2025. Deals are attributed to the franchise-award year and leads to inquiry year; % change columns compare each year to the prior one.</div>
    </div>`;
   lineChart(document.getElementById("fundLine"),{labels:FUND.years.map(String),
     series:[{name:"Fund Revenue",color:"#00e676",data:FUND.marketingFundRevenue},{name:"Ad & Mktg",color:"#3ba7ff",data:FUND.advertisingMarketing}]});
   barChart(document.getElementById("fundGap"),{labels:FUND.years.map(String),data:gap,unit:"Gap",height:260});
   barChart(document.getElementById("fundPct"),{labels:FUND.years.map(String),data:pctOfRev,color:"#b37feb",yFmt:v=>fmtPct(v,0),tipFmt:v=>fmtPct(v,2),unit:"Fund % of Rev",height:260});
+  groupedBar(document.getElementById("yoyBars"),{groups:yoyMetrics.map(m=>({label:m.name,fmt:m.fmt,values:m.vals})),series:yoySeries,height:360});
 }
 
 // ---- TAB 1: MONTHLY SPEND 2025 ----
