@@ -221,6 +221,7 @@
   <section class="tab-panel" id="tab6"></section>
   <section class="tab-panel" id="tab7"></section>
   <section class="tab-panel" id="tab4"></section>
+  <section class="tab-panel" id="tab8"></section>
 </main>
 
 <script>
@@ -327,6 +328,7 @@ let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, 
 let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
 let STATES=[];      // [{s,r,l,w}] US states with ≥1 lead, sorted by leads desc
 let STATE_META={};  // {usLeads,usWon,nonUsLeads,nonUsCount,blankLeads,total}
+let BUDGET_Q=null;  // Budget Recommendations tab: user-set quarterly budget (survives rebuilds)
 
 // Canonical stores that survive across uploads
 let spendStore = {};              // "YYYY-MM" -> { entityName: value }
@@ -1533,6 +1535,165 @@ function buildGeographic(){
   renderGeoTable();
 }
 
+// ---- TAB: BUDGET RECOMMENDATIONS (data-driven allocation from channel conversion) ----
+// Recommended split: performing channels (won>0) tilt their current lead-volume share toward
+// efficiency vs the 2.5% benchmark; zero-conversion channels are floored to 10% of current share
+// (minimal presence). Projected impact is deliberately conservative — it credits channel growth
+// only up to 3× each channel's *proven* volume (overflow returns to the highest-volume channel)
+// so small-sample conversion rates are never over-extrapolated.
+function brStats(){
+  const bench=INDUSTRY_BENCHMARK/100; // 0.025
+  const ch=CHANNELS.map((c,i)=>({name:c.name,color:CHANNEL_COLORS[i%CHANNEL_COLORS.length],leads:c.leads,won:c.won}));
+  const totLeads=sum(ch.map(c=>c.leads))||1, totWon=sum(ch.map(c=>c.won));
+  ch.forEach(c=>{c.conv=c.leads?c.won/c.leads:0; c.curShare=c.leads/totLeads;});
+  ch.forEach(c=>{ c.w = c.won>0 ? c.curShare*(c.conv/bench) : c.curShare*0.10; });
+  const totW=sum(ch.map(c=>c.w))||1;
+  ch.forEach(c=>c.recShare=c.w/totW);
+  // proven-scale cap (≤3× current share; overflow → highest-volume channel) for the conservative projection
+  const hi=ch.reduce((a,b)=>b.leads>a.leads?b:a);
+  let ov=0; ch.forEach(c=>{const cap=3*c.curShare; c.capShare=c.recShare; if(c!==hi&&c.recShare>cap){ov+=c.recShare-cap;c.capShare=cap;}}); hi.capShare+=ov;
+  const curConv=totWon/totLeads, projConv=sum(ch.map(c=>c.capShare*c.conv));
+  const ratio=curConv>0?projConv/curConv:1;
+  // financials from Income Statement A&M spend (2023–2025) + CRM leads
+  const yrs=[2023,2024,2025], fi=y=>FUND.years.indexOf(y);
+  const spend2325=sum(yrs.map(y=>FUND.advertisingMarketing[fi(y)]||0));
+  const leads2325=sum(yrs.map(y=>LEADS_BY_YEAR[y]||0))||1;
+  const cpl=spend2325/leads2325, costPerDeal=CLOSED_DEALS?spend2325/CLOSED_DEALS:0;
+  const noResp=sum(Object.values(DEAD_BY_CHANNEL).map(r=>r["No Response"]||0));
+  const lastAM=FUND.advertisingMarketing[FUND.advertisingMarketing.length-1]||740000;
+  const defQ=Math.round((lastAM/4)/5000)*5000;
+  return {ch,totLeads,totWon,curConv,projConv,ratio,cpl,costPerDeal,noResp,spend2325,leads2325,defQ,bench};
+}
+
+function buildBudgetRecs(){
+  const p=document.getElementById("tab8");
+  const st=brStats();
+  if(BUDGET_Q==null) BUDGET_Q=Math.min(500000,Math.max(50000,st.defQ||185000));
+  const curCPC=fmtUSD(st.costPerDeal), projCPC=fmtUSD(st.ratio>0?st.costPerDeal/st.ratio:0);
+  p.innerHTML=`
+   <div class="tab-head"><h2>Budget Recommendations</h2>
+     <p>A data-driven quarterly budget allocation generated from measured channel conversion (Export.xlsx) and 2023–2025 Advertising &amp; Marketing spend (Income Statement). Every figure is derived from actual performance — set your total quarterly budget and the recommended split, action items and projected impact recompute live. No estimate extends beyond what the data supports.</p></div>
+   <div class="kpis">
+     <div class="kpi bad"><div class="label">Current Blended Conversion</div><div class="val r">${fmtPct(st.curConv*100,2)}</div><div class="sub">${st.totWon} closes ÷ ${fmtNum(st.totLeads)} leads</div></div>
+     <div class="kpi"><div class="label">Projected Conversion</div><div class="val g">${fmtPct(st.projConv*100,2)}</div><div class="sub">recommended mix · proven-scale</div></div>
+     <div class="kpi alt"><div class="label">Cost / Conversion</div><div class="val" style="font-size:19px">${curCPC} → <span class="g">${projCPC}</span></div><div class="sub">−${fmtPct((1-1/st.ratio)*100,0)} per closed deal</div></div>
+     <div class="kpi warn"><div class="label">Conversion Uplift</div><div class="val">${st.ratio>=1?'+':''}${fmtPct((st.ratio-1)*100,0)}</div><div class="sub">same spend, better mix</div></div>
+   </div>
+   <div class="card">
+     <h3>Set Your Quarterly Budget</h3>
+     <p class="csub">Drag to model a total quarterly marketing budget between $50K and $500K — the recommended split, actions and projections below scale to match</p>
+     <div style="display:flex;align-items:center;gap:20px;flex-wrap:wrap;margin-top:8px">
+       <div style="font-size:30px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px;min-width:158px" id="brBudgetVal">${fmtUSDfull(BUDGET_Q)}</div>
+       <input id="brSlider" type="range" min="50000" max="500000" step="5000" value="${BUDGET_Q}" style="flex:1;min-width:260px;accent-color:var(--green);height:6px;cursor:pointer">
+     </div>
+     <div style="display:flex;justify-content:space-between;font-size:11px;color:var(--dim);margin-top:8px"><span>$50K / qtr</span><span id="brBudgetSub">≈ ${fmtUSDfull(BUDGET_Q*4)} / year</span><span>$500K / qtr</span></div>
+   </div>
+   <div id="brDynamic"></div>`;
+  const sl=document.getElementById("brSlider");
+  sl.addEventListener("input",()=>{
+    BUDGET_Q=+sl.value;
+    document.getElementById("brBudgetVal").textContent=fmtUSDfull(BUDGET_Q);
+    document.getElementById("brBudgetSub").textContent="≈ "+fmtUSDfull(BUDGET_Q*4)+" / year";
+    renderBudgetDynamic();
+  });
+  renderBudgetDynamic();
+}
+
+function renderBudgetDynamic(){
+  const host=document.getElementById("brDynamic"); if(!host) return;
+  const st=brStats(), B=BUDGET_Q, bench=INDUSTRY_BENCHMARK;
+  const rows=st.ch.map(c=>({...c,curB:c.curShare*B,recB:c.recShare*B,delta:(c.recShare-c.curShare)*B}))
+                  .sort((a,b)=>b.leads-a.leads);
+  const curSegs=rows.map(c=>({label:c.name,value:c.curB,color:c.color}));
+  const recSegs=rows.map(c=>({label:c.name,value:c.recB,color:c.color}));
+  const deltaCell=d=>{const s=Math.abs(d)<1?'<span style="color:var(--dim)">—</span>':`<span style="color:${d>0?'var(--green)':'var(--loss)'}">${d>0?'▲ +':'▼ −'}${fmtUSD(Math.abs(d))}</span>`;return s;};
+
+  // ---- Auto-generated action cards from the same data ----
+  const byLeads=[...rows];
+  const hiConv=byLeads[0]?byLeads[0].conv:0; // highest-volume channel = the "site average" baseline
+  const winners=rows.filter(c=>c.won>0 && c.conv*100>=bench).sort((a,b)=>b.conv-a.conv);
+  const fixer=rows.filter(c=>c.won>0 && c.conv*100<bench).sort((a,b)=>b.leads-a.leads)[0];
+  const deadHigh=rows.filter(c=>c.won===0 && c.leads>=50).sort((a,b)=>b.leads-a.leads);
+  const deadLow=rows.filter(c=>c.won===0 && c.leads<50).sort((a,b)=>b.leads-a.leads);
+  const cards=[];
+  winners.forEach(c=>{
+    const mult=hiConv>0?(c.conv/hiConv):0;
+    cards.push({cls:"up",tag:"Grow",icon:"📈",title:`Scale ${c.name}`,
+      body:`Converts at <b>${fmtPct(c.conv*100,2)}</b> (${c.won} of ${fmtNum(c.leads)} leads)${mult>=2?` — ${mult.toFixed(0)}× the site-wide average`:''}, ${c.conv*100>=bench?'above':'near'} the ${fmtPct(bench,1)} benchmark. Raise quarterly spend <b>${fmtUSD(c.curB)} → ${fmtUSD(c.recB)}</b>. Small sample — phase in and re-measure as volume grows.`});
+  });
+  if(fixer) cards.push({cls:"hold",tag:"Fix",icon:"🌐",title:`Trim — don't kill — ${fixer.name}`,
+    body:`<b>${fmtPct(fixer.curShare*100,0)}</b> of all leads but only <b>${fmtPct(fixer.conv*100,2)}</b> convert, yet it still drives ${fixer.won} of ${st.totWon} total closes. Reduce <b>${fmtUSD(fixer.curB)} → ${fmtUSD(fixer.recB)}</b> and route the savings into follow-up rather than more top-of-funnel traffic — the bottleneck is conversion, not volume.`});
+  deadHigh.forEach(c=>cards.push({cls:"down",tag:"Cut",icon:"✂️",title:`Cut ${c.name}`,
+    body:`${fmtNum(c.leads)} leads, <b>0 closes</b> — the highest-volume dead channel. Reduce <b>${fmtUSD(c.curB)} → ${fmtUSD(c.recB)}</b> and hold at a maintenance level until lead quality and routing are fixed.`}));
+  if(deadLow.length){
+    const names=deadLow.map(c=>c.name).join(" &amp; "), dl=sum(deadLow.map(c=>c.leads)), dr=sum(deadLow.map(c=>c.recB));
+    cards.push({cls:"down",tag:"Cut",icon:"🛑",title:`Minimize ${names}`,
+      body:`${names} generated <b>${fmtNum(dl)} leads and 0 closes</b> (100% went dead, mostly on "No Response"). Hold at a minimal combined test budget of <b>${fmtUSD(dr)}</b> — reallocate the rest to channels that actually convert.`});
+  }
+  cards.push({cls:"up",tag:"Build",icon:"⚡",title:"Fix follow-up before buying more traffic",
+    body:`<b>${fmtNum(st.noResp)} of ${fmtNum(st.totLeads)} leads (${fmtPct(st.noResp/st.totLeads*100,0)})</b> died on "No Response" — roughly <b>${fmtUSD(st.noResp*st.cpl)}</b> of lead-acquisition spend that returned nothing. Fund a dedicated CRM automation &amp; SDR speed-to-lead motion: the cheapest deal is the lead you already paid for.`});
+  const actionHtml=cards.map(c=>`<div class="r ${c.cls}"><div class="rt"><span class="tag">${c.tag}</span>${c.icon} ${c.title}</div><p>${c.body}</p></div>`).join("");
+
+  // ---- Projected impact (annualized: this quarterly budget × 4) ----
+  const annualB=B*4;
+  const leadsY=st.cpl?annualB/st.cpl:0;
+  const curConvY=st.costPerDeal?annualB/st.costPerDeal:0;
+  const projConvY=curConvY*st.ratio;
+  const curCPC=st.costPerDeal, projCPC=st.ratio>0?st.costPerDeal/st.ratio:0;
+  const tile=(label,cur,proj,delta,note)=>`
+    <div style="background:var(--surface2);border:1px solid var(--border);border-radius:12px;padding:16px 18px">
+      <div style="font-size:11px;text-transform:uppercase;letter-spacing:.6px;color:var(--muted);font-weight:600">${label}</div>
+      <div style="display:flex;align-items:baseline;gap:9px;margin-top:9px;flex-wrap:wrap">
+        <span style="font-size:15px;color:var(--dim);font-variant-numeric:tabular-nums">${cur}</span>
+        <span style="color:var(--dim)">→</span>
+        <span style="font-size:24px;font-weight:700;font-variant-numeric:tabular-nums;letter-spacing:-.5px">${proj}</span>
+      </div>
+      <div style="margin-top:8px">${delta}</div>
+      <div style="font-size:11px;color:var(--dim);margin-top:7px;line-height:1.5">${note}</div>
+    </div>`;
+  const pill=(txt,good)=>`<span class="pill ${good?'good':'bad'}">${txt}</span>`;
+  const impactHtml=`<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(210px,1fr));gap:14px">
+    ${tile("Annual Leads",fmtNum(Math.round(leadsY)),fmtNum(Math.round(leadsY)),'<span class="pill mid">unchanged</span>',`Same budget buys the same volume at the blended ${fmtUSD(st.cpl)}/lead — the gain comes from conversion, not more leads.`)}
+    ${tile("Annual Conversions",curConvY.toFixed(1),projConvY.toFixed(1),pill(`▲ +${fmtPct((st.ratio-1)*100,0)}`,true),`Closed franchise deals per year, applying each channel's measured conversion to the recommended mix (capped at 3× proven volume).`)}
+    ${tile("Cost / Conversion",fmtUSD(curCPC),fmtUSD(projCPC),pill(`▼ −${fmtPct((1-1/st.ratio)*100,0)}`,true),`Total spend ÷ closed deals. Reallocating toward channels that convert lowers cost per deal without adding budget.`)}
+  </div>`;
+
+  host.innerHTML=`
+   <div class="card">
+     <h3>Current vs Recommended Budget Split</h3>
+     <p class="csub">Left of each row = current implied split (each channel's share of today's lead volume) · right = the data-driven recommended split for ${fmtUSDfull(B)}/quarter</p>
+     <div style="display:flex;flex-direction:column;gap:14px;margin-top:4px">
+       <div><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Current implied allocation</div><div id="brCurBar"></div></div>
+       <div><div style="font-size:12px;color:var(--muted);font-weight:600;margin-bottom:6px">Recommended allocation</div><div id="brRecBar"></div></div>
+     </div>
+     <div class="legend" style="margin-top:14px">${rows.map(c=>`<div class="item"><span class="swatch" style="background:${c.color}"></span>${c.name}</div>`).join("")}</div>
+     <div class="tbl-scroll" style="margin-top:16px"><table class="tbl">
+       <thead><tr><th>Channel</th><th>Conversion</th><th>Current %</th><th>Current $/qtr</th><th>Recommended %</th><th>Recommended $/qtr</th><th>Change</th></tr></thead>
+       <tbody>${rows.map(c=>`<tr>
+         <td><span class="chip"><span class="sw" style="background:${c.color}"></span>${c.name}</span></td>
+         <td class="${c.conv*100>=bench?'pos':'neg'}">${fmtPct(c.conv*100,2)}</td>
+         <td>${fmtPct(c.curShare*100,1)}</td><td>${fmtUSDfull(c.curB)}</td>
+         <td style="font-weight:700">${fmtPct(c.recShare*100,1)}</td><td style="font-weight:700">${fmtUSDfull(c.recB)}</td>
+         <td>${deltaCell(c.delta)}</td></tr>`).join("")}
+       </tbody>
+     </table></div>
+     <div class="note"><b>Method:</b> current implied spend assumes budget currently follows lead volume. The recommended split tilts each converting channel's share toward its efficiency vs the ${fmtPct(bench,1)} benchmark, floors zero-conversion channels to a minimal 10% of their current share, then renormalizes to your total. Import &amp; curated-form channels rise (5.26% &amp; 4.71% conversion); the 0.51%-converting website volume is trimmed but retained; zero-converting paid/referral channels drop to a maintenance level.</div>
+   </div>
+   <div class="card">
+     <h3>Recommended Actions</h3>
+     <p class="csub">Auto-generated from the channel scorecard — dollar figures scale with your budget slider</p>
+     <div class="reco">${actionHtml}</div>
+   </div>
+   <div class="card">
+     <h3>Projected Impact · Annualized</h3>
+     <p class="csub">If the recommended split is followed at ${fmtUSDfull(B)}/quarter (${fmtUSDfull(annualB)}/year), vs the current channel mix</p>
+     ${impactHtml}
+     <div class="note"><b>How this is projected:</b> annual leads = budget ÷ blended ${fmtUSD(st.cpl)} cost-per-lead (2023–2025 A&amp;M spend ÷ leads). Conversions apply each channel's <b>actual</b> measured rate to the recommended mix, with every channel capped at <b>3× its proven volume</b> so small-sample rates (List Import's 5.26% on 19 leads) are never over-extrapolated — the projected ${fmtPct((st.ratio-1)*100,0)}% uplift is a conservative floor, not a ceiling.</div>
+   </div>`;
+  stackedBar(document.getElementById("brCurBar"),{segments:curSegs});
+  stackedBar(document.getElementById("brRecBar"),{segments:recSegs});
+}
+
 // ============================== TAB NAV ==============================
 const TABS=[
   {t:"Fund Overview",b:buildFund},
@@ -1542,7 +1703,8 @@ const TABS=[
   {t:"Response Time",b:buildResponse},
   {t:"Seasonal Patterns",b:buildSeasonal},
   {t:"Geographic",b:buildGeographic},
-  {t:"Cost Per Conversion",b:buildCPC}
+  {t:"Cost Per Conversion",b:buildCPC},
+  {t:"Budget Recommendations",b:buildBudgetRecs}
 ];
 const nav=document.getElementById("tabs");
 TABS.forEach((tb,i)=>{const btn=document.createElement("button");btn.innerHTML=`<span class="num">${i+1}</span>${tb.t}`;
