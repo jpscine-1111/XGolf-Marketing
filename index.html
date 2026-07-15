@@ -67,6 +67,31 @@
   .kpi .sub{font-size:11.5px;color:var(--dim);margin-top:3px}
   .kpi .val.g{color:var(--green)} .kpi .val.r{color:var(--loss)}
 
+  /* Network Alerts */
+  .alerts-head{display:flex;align-items:baseline;gap:10px;margin:2px 0 12px}
+  .alerts-head h3{font-size:16px;font-weight:700;margin:0}
+  .alerts-head .cnt{font-size:12px;color:var(--dim)}
+  .alerts{display:grid;grid-template-columns:repeat(auto-fit,minmax(340px,1fr));gap:14px;margin-bottom:24px}
+  .alert{background:var(--surface);border:1px solid var(--border);border-radius:12px;
+    padding:15px 17px 15px 18px;position:relative;overflow:hidden;display:flex;gap:13px;align-items:flex-start}
+  .alert::before{content:"";position:absolute;left:0;top:0;bottom:0;width:4px}
+  .alert.red::before{background:var(--loss)}
+  .alert.yellow::before{background:var(--c3)}
+  .alert.green::before{background:var(--green)}
+  .alert .ic{font-size:21px;line-height:1;flex:none;margin-top:1px}
+  .alert .body{flex:1;min-width:0}
+  .alert .hl{font-size:13.5px;font-weight:700;letter-spacing:.1px;display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+  .alert .tag{font-size:9.5px;font-weight:700;text-transform:uppercase;letter-spacing:.6px;padding:2px 8px;border-radius:20px;flex:none}
+  .alert.red .tag{background:rgba(255,82,82,.15);color:var(--loss)}
+  .alert.yellow .tag{background:rgba(255,176,32,.16);color:var(--c3)}
+  .alert.green .tag{background:rgba(0,230,118,.14);color:var(--green)}
+  .alert .metric{font-size:12.5px;margin-top:6px;color:var(--text);line-height:1.45}
+  .alert .metric b{font-variant-numeric:tabular-nums;font-weight:700}
+  .alert.red .metric b{color:var(--loss)} .alert.yellow .metric b{color:var(--c3)} .alert.green .metric b{color:var(--green)}
+  .alert .act{font-size:11.5px;color:var(--muted);margin-top:7px;line-height:1.5}
+  .alert .act b{color:var(--text);font-weight:600}
+  .alert.green{grid-column:1/-1}
+
   .card{background:var(--surface);border:1px solid var(--border);border-radius:14px;padding:20px 22px;margin-bottom:20px}
   .card h3{margin:0 0 2px;font-size:15.5px;font-weight:700}
   .card .csub{margin:0 0 16px;font-size:12.5px;color:var(--muted)}
@@ -766,6 +791,82 @@ function buildFund(){
     const cls=Math.abs(d)<0.05?'':(good?'pos':'neg'), arrow=d>0.05?'▲':d<-0.05?'▼':'';
     return `<td class="${cls}" style="font-variant-numeric:tabular-nums">${arrow} ${d>0?'+':''}${d.toFixed(1)}%</td>`;
   };
+  // ---- Network Alerts: auto-flag anomalies across fund, leads, channels & response time ----
+  const fmtDays=(v,d=1)=>v.toFixed(d)+(Math.abs(v-1)<1e-9?" day":" days");
+  const alerts=[];
+  // 1) Cost-per-lead spike — any 2025 month whose net cost/lead is >2× the 2025 blended average (red)
+  {
+    let ySpend=0, yLeads=0; const rows=[];
+    for(let m=1;m<=12;m++){
+      const k=mkKey(2025,m), so=spendStore[k];
+      const s=so?sum(Object.values(so)):0;
+      const mo=RESPONSE.monthly&&RESPONSE.monthly[k]; const l=mo?mo.total:0;
+      ySpend+=s; yLeads+=l; rows.push({m,spend:s,leads:l,cpl:l>0?s/l:0});
+    }
+    const avgCPL=yLeads>0?ySpend/yLeads:0;
+    const spikes=rows.filter(o=>o.leads>0&&avgCPL>0&&o.cpl>2*avgCPL).sort((a,b)=>b.cpl-a.cpl);
+    if(spikes.length){
+      const w=spikes[0], more=spikes.length-1;
+      alerts.push({level:"red",icon:"📈",headline:"Cost-per-lead spike",
+        metric:`<b>${fmtUSDfull(w.cpl)}/lead</b> in ${MONTH_NAMES[w.m-1]} 2025 — ${(w.cpl/avgCPL).toFixed(1)}× the ${fmtUSDfull(avgCPL)} annual average${more>0?` (plus ${more} other month${more>1?'s':''} over 2×)`:''}`,
+        action:`Audit ${MONTH_NAMES[w.m-1]}'s ${fmtUSD(w.spend)} spend against just ${fmtNum(w.leads)} leads — <b>pause or reallocate</b> the campaigns that ran hot without a matching lead lift.`});
+    }
+  }
+  // 2) Marketing fund gap — 2025 collected−spent gap exceeding 20% of collections (yellow)
+  {
+    const yi=FUND.years.indexOf(2025)>=0?FUND.years.indexOf(2025):FUND.years.length-1;
+    const collected=FUND.marketingFundRevenue[yi], spent=FUND.advertisingMarketing[yi];
+    const g=collected-spent, pct=collected?Math.abs(g)/collected*100:0;
+    if(collected&&pct>20){
+      const over=g<0;
+      alerts.push({level:"yellow",icon:"⚠️",headline:over?"Marketing fund overspend":"Marketing fund underspend",
+        metric:`${over?'Spend exceeded collections by':'Collected−spent surplus of'} <b>${fmtUSD(Math.abs(g))}</b> in ${FUND.years[yi]} — ${fmtPct(pct,0)} of the ${fmtUSD(collected)} collected, past the 20% threshold`,
+        action:over?`The fund is drawing down reserves — <b>rein in ad &amp; marketing spend</b> or raise franchisee contributions to bring the gap back under 20%.`:`Franchisee dollars are collected but sitting idle — <b>deploy the surplus</b> into demand generation or return it via rebate rather than letting the fund accumulate.`});
+    }
+  }
+  // 3) "No Response" death rate — >60% of all leads dying on No Response (red)
+  {
+    const noResp=sum(Object.values(DEAD_BY_CHANNEL).map(r=>r["No Response"]||0));
+    const tot=TOTAL_LEADS||sum(CHANNELS.map(c=>c.leads));
+    const pct=tot?noResp/tot*100:0;
+    if(pct>60){
+      alerts.push({level:"red",icon:"📵",headline:"“No Response” is killing leads",
+        metric:`<b>${fmtPct(pct,0)}</b> of leads — ${fmtNum(noResp)} of ${fmtNum(tot)} — die on “No Response,” above the 60% threshold`,
+        action:`Stand up an <b>SDR speed-to-lead cadence and CRM auto-follow-up</b>. A small lift in follow-up beats any new top-of-funnel spend — the cheapest deal is the lead you already paid for.`});
+    }
+  }
+  // 4) Channel underperformance — any channel with >100 leads and zero conversions (yellow)
+  {
+    const bad=CHANNELS.filter(c=>c.leads>100&&c.won===0).sort((a,b)=>b.leads-a.leads);
+    if(bad.length){
+      const w=bad[0], more=bad.length-1;
+      alerts.push({level:"yellow",icon:"🚱",headline:"Channel converting nothing",
+        metric:`<b>${w.name}</b> — ${fmtNum(w.leads)} leads, <b>0 conversions</b>${more>0?` (plus ${more} other channel${more>1?'s':''} over 100 leads with no closes)`:''}`,
+        action:`High volume with zero closes points to a <b>targeting or lead-quality problem</b>, not a spend shortfall — qualify these leads harder or pause ${w.name} until quality improves.`});
+    }
+  }
+  // 5) Response-time lag — any source averaging >10 days to first contact (red)
+  {
+    const lag=Object.entries(RESPONSE.bySource||{})
+      .map(([s,b])=>({s,contacted:b.contacted,avg:b.contacted?b.sumDays/b.contacted:0}))
+      .filter(o=>o.contacted>0&&o.avg>10).sort((a,b)=>b.avg-a.avg);
+    if(lag.length){
+      const w=lag[0], more=lag.length-1;
+      alerts.push({level:"red",icon:"⏱️",headline:"Slow first-contact response",
+        metric:`<b>${w.s}</b> averages <b>${fmtDays(w.avg)}</b> to first contact${more>0?` (plus ${more} other source${more>1?'s':''} over 10 days)`:''} — past the 10-day threshold`,
+        action:`Route ${w.s} leads to an <b>immediate auto-response and same-day SDR touch</b>. Response speed tracks directly with which leads convert.`});
+    }
+  }
+  const alertCardHTML=a=>`<div class="alert ${a.level}"><div class="ic">${a.icon}</div><div class="body">
+       <div class="hl"><span class="tag">${a.level==="red"?"Critical":"Warning"}</span>${a.headline}</div>
+       <div class="metric">${a.metric}</div>
+       <div class="act">${a.act||a.action}</div></div></div>`;
+  const alertsHTML=alerts.length
+    ? `<div class="alerts">${alerts.map(alertCardHTML).join("")}</div>`
+    : `<div class="alerts"><div class="alert green"><div class="ic">✅</div><div class="body">
+         <div class="hl"><span class="tag">All Clear</span>No network alerts</div>
+         <div class="metric">Every monitored threshold is within range — cost per lead, fund balance, “No Response” rate, channel conversion and speed-to-lead all check out.</div>
+         <div class="act">These auto-checks re-run every time new spend or CRM data is uploaded.</div></div></div></div>`;
   p.innerHTML=`
    <div class="tab-head"><h2>Marketing Fund Overview</h2>
      <p>Consolidated Marketing Fund revenue (collected from franchisees) versus Advertising &amp; Marketing spend, 2020–2025. Source: XGA Consolidated Income Statement.</p></div>
@@ -776,6 +877,8 @@ function buildFund(){
      <div class="kpi pur"><div class="label">Fund as % of Revenue · 2025</div><div class="val">${fmtPct(pctOfRev[5])}</div><div class="sub">up from ${fmtPct(pctOfRev[0])} in 2020</div></div>
      <div class="kpi warn"><div class="label">6-Yr Cumulative Gap</div><div class="val r">${fmtUSD(totalCollected-totalSpent)}</div><div class="sub">${fmtUSD(totalCollected)} in / ${fmtUSD(totalSpent)} out</div></div>
    </div>
+   <div class="alerts-head"><h3>Network Alerts</h3><span class="cnt">${alerts.length?`${alerts.length} condition${alerts.length>1?'s':''} flagged · auto-monitored`:'auto-monitored · updates with new data'}</span></div>
+   ${alertsHTML}
    <div class="card">
      <h3>Fund Collected vs Marketing Spent</h3>
      <p class="csub">Both series in USD on a single axis · 2020–2025</p>
