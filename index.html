@@ -647,6 +647,51 @@ function dualPanelChart(el2,{labels,spend,leads,status,tyLabel}){
   hit.addEventListener("mouseleave",()=>tip.style.opacity=0);
 }
 
+// ============================== CHART: SCATTER + TREND LINE ==============================
+// One point per month: x = marketing spend, y = lead volume. Least-squares trend line
+// plus labeled, hoverable points. slope/intercept come from the caller's regression.
+function scatterCorr(el2,{points,slope,intercept,xFmt=fmtUSD,yFmt=fmtNum,xTitle="",yTitle="",height=400}){
+  const W=760,H=height,padL=66,padR=28,padT=22,padB=54;
+  const xs=points.map(p=>p.x), ys=points.map(p=>p.y);
+  const xT=niceTicks(Math.min(0,...xs),Math.max(...xs),5);
+  const yT=niceTicks(0,Math.max(...ys,1),5);
+  const xw=W-padL-padR, yh=H-padT-padB;
+  const X=v=>padL+xw*(v-xT.lo)/(xT.hi-xT.lo);
+  const Y=v=>padT+yh*(1-(v-yT.lo)/(yT.hi-yT.lo));
+  let g=`<svg class="chart" viewBox="0 0 ${W} ${H}" preserveAspectRatio="xMidYMid meet">`;
+  g+='<g class="grid">';
+  yT.ticks.forEach(t=>g+=`<line class="${t===0?'zero':''}" x1="${padL}" y1="${Y(t)}" x2="${W-padR}" y2="${Y(t)}"/>`);
+  xT.ticks.forEach(t=>g+=`<line class="${t===0?'zero':''}" x1="${X(t)}" y1="${padT}" x2="${X(t)}" y2="${padT+yh}"/>`);
+  g+='</g><g class="axis">';
+  yT.ticks.forEach(t=>g+=`<text x="${padL-9}" y="${Y(t)+4}" text-anchor="end">${yFmt(t)}</text>`);
+  xT.ticks.forEach(t=>g+=`<text x="${X(t)}" y="${padT+yh+18}" text-anchor="middle">${xFmt(t)}</text>`);
+  g+='</g>';
+  // axis titles
+  g+=`<text x="${padL+xw/2}" y="${H-8}" text-anchor="middle" style="fill:var(--muted);font-size:11.5px;font-weight:600">${xTitle}</text>`;
+  g+=`<text x="15" y="${padT+yh/2}" text-anchor="middle" transform="rotate(-90 15 ${padT+yh/2})" style="fill:var(--muted);font-size:11.5px;font-weight:600">${yTitle}</text>`;
+  // least-squares trend line across the data's x-extent
+  const xmin=Math.min(...xs),xmax=Math.max(...xs),ty=x=>slope*x+intercept;
+  g+=`<line x1="${X(xmin)}" y1="${Y(ty(xmin))}" x2="${X(xmax)}" y2="${Y(ty(xmax))}" stroke="var(--c3)" stroke-width="2" stroke-dasharray="6 4" opacity=".9"/>`;
+  // points + month labels
+  points.forEach((p,i)=>{
+    g+=`<circle class="pt" data-i="${i}" cx="${X(p.x)}" cy="${Y(p.y)}" r="5.5" fill="var(--green)" stroke="var(--bg)" stroke-width="1.5" opacity=".92"/>`;
+    g+=`<text x="${X(p.x)+9}" y="${Y(p.y)+3.5}" style="fill:var(--muted);font-size:10.5px;font-weight:600;pointer-events:none">${p.label}</text>`;
+  });
+  g+='</svg>';
+  el2.innerHTML=g;el2.classList.add("chart-wrap");
+  const svg=el2.querySelector("svg"),tip=attachTip(el2);
+  svg.querySelectorAll(".pt").forEach(c=>{
+    c.addEventListener("mouseenter",()=>c.setAttribute("r","7.5"));
+    c.addEventListener("mouseleave",()=>{c.setAttribute("r","5.5");tip.style.opacity=0;});
+    c.addEventListener("mousemove",e=>{const i=+c.dataset.i,p=points[i],r=svg.getBoundingClientRect();
+      tip.innerHTML=`<div class="tt-title">${p.fullLabel||p.label}</div>
+        <div class="tt-row"><span class="k"><span class="sw" style="background:#3ba7ff"></span>Spend</span><span class="v">${fmtUSDfull(p.x)}</span></div>
+        <div class="tt-row"><span class="k"><span class="sw" style="background:var(--green)"></span>Leads</span><span class="v">${fmtNum(p.y)}</span></div>`;
+      tip.style.opacity=1;
+      moveTip(tip,el2,(e.clientX-r.left)/r.width*el2.clientWidth,(e.clientY-r.top)/r.height*el2.clientHeight);});
+  });
+}
+
 // ============================== TAB BUILDERS ==============================
 function el(html){const d=document.createElement("div");d.innerHTML=html.trim();return d.firstElementChild;}
 
@@ -755,6 +800,32 @@ function buildLeadsSpend(){
   const firstLead=LEADS_2025[0], lastLead=LEADS_2025[LEADS_2025.length-1];
   const trendPct=firstLead?(lastLead-firstLead)/firstLead*100:0;
   const rangeSub=SINGLE_YEAR?SINGLE_YEAR+" · "+MONTHS[0]+"–"+MONTHS[MONTHS.length-1]:MONTHS[0]+"–"+MONTHS[MONTHS.length-1];
+  // ---- Spend vs Leads correlation: one point per month, least-squares regression + Pearson r ----
+  const corrPts=MONTHS.map((m,i)=>({x:spend[i],y:LEADS_2025[i],label:MONTHS[i],fullLabel:MONTH_NAMES[i]?MONTH_NAMES[i]:MONTHS[i]}));
+  const nC=corrPts.length;
+  const mX=sum(spend)/nC, mY=sum(LEADS_2025)/nC;
+  let sXY=0,sXX=0,sYY=0;
+  corrPts.forEach(p=>{const dx=p.x-mX,dy=p.y-mY;sXY+=dx*dy;sXX+=dx*dx;sYY+=dy*dy;});
+  const corrR=(sXX>0&&sYY>0)?sXY/Math.sqrt(sXX*sYY):0;
+  const corrSlope=sXX>0?sXY/sXX:0, corrInt=mY-corrSlope*mX, corrR2=corrR*corrR;
+  const absR=Math.abs(corrR);
+  const strength=absR>=0.7?"strong":absR>=0.4?"moderate":absR>=0.2?"weak":"negligible";
+  const dirWord=corrR>0.05?"positive":corrR<-0.05?"negative":"flat";
+  // Callout framing: strong+ correlation reads as spend-linked; weak reads as independent.
+  let coTag,coCls,coHead,coBody;
+  if(absR<0.2){
+    coTag="Independent";coCls="hold";coHead="Spend and leads move independently";
+    coBody=`At <b>R = ${corrR.toFixed(2)}</b> there is essentially no linear relationship — only <b>${fmtPct(corrR2*100,0)}</b> of month-to-month lead variation tracks with spend. Lead volume is driven by seasonal demand, not by how much was spent that month, so simply increasing spend gives no reliable lift in inbound leads.`;
+  }else if(corrR<0){
+    coTag="Inverse";coCls="down";coHead="Higher-spend months produced fewer leads";
+    coBody=`The trend line slopes <b>downward</b> (R = ${corrR.toFixed(2)}, a ${strength} negative correlation). Leads were front-loaded into Q1 when spend was lightest, while heavier H2 spend coincided with the seasonal decline — so spend is <b>not driving leads</b>; the two are moving in opposite directions because spend was timed against, not with, demand. Re-timing budget toward the high-intent early-year window is the lever, not more total spend.`;
+  }else if(absR>=0.4){
+    coTag="Spend-linked";coCls="up";coHead="More spend tracks with more leads";
+    coBody=`The trend line slopes <b>upward</b> (R = ${corrR.toFixed(2)}, a ${strength} positive correlation) and spend explains about <b>${fmtPct(corrR2*100,0)}</b> of the month-to-month variation in leads. Higher-spend months do tend to deliver more leads — spend appears to be a genuine lead driver, so incremental budget is more likely to return incremental volume. Correlation is not proof of causation, but the relationship is directionally supportive.`;
+  }else{
+    coTag="Weakly linked";coCls="hold";coHead="A faint positive link, mostly noise";
+    coBody=`R = ${corrR.toFixed(2)} is a ${strength} positive relationship — spend explains only <b>${fmtPct(corrR2*100,0)}</b> of lead variation. There is a slight tendency for higher-spend months to see more leads, but it is too weak to treat spend as a dependable lead lever; seasonal demand dominates.`;
+  }
   p.innerHTML=`
    <div class="tab-head"><h2>Lead Volume vs Marketing Spend · ${SPEND_RANGE}</h2>
      <p>Monthly inbound franchise leads (Export.xlsx) aligned with monthly Advertising &amp; Marketing spend (P&amp;Ls), and the resulting cost per lead. Two measures on different scales are shown as aligned panels rather than a dual axis.</p></div>
@@ -784,10 +855,28 @@ function buildLeadsSpend(){
          <tr><td>Cost / Lead</td>${cpl.map(v=>`<td class="${v<0?'neg':''}">${fmtUSDfull(v)}</td>`).join("")}<td style="font-weight:700;color:var(--green)">${fmtUSDfull(avgCPL)}</td></tr>
        </tbody>
      </table></div>
+   </div>
+   <div class="card">
+     <h3>Spend vs Leads Correlation${SINGLE_YEAR?" · "+SINGLE_YEAR:""}</h3>
+     <p class="csub">Each point is one month — marketing spend (X) against inbound lead volume (Y). The dashed line is the least-squares trend; R measures how tightly the two move together.</p>
+     <div class="kpis" style="margin-bottom:18px">
+       <div class="kpi ${corrR<0?'bad':(absR>=0.4?'':'warn')}"><div class="label">Correlation · R</div><div class="val ${corrR<0?'r':(absR>=0.4?'g':'')}">${corrR>=0?'+':''}${corrR.toFixed(2)}</div><div class="sub">${strength} ${dirWord} relationship</div></div>
+       <div class="kpi alt"><div class="label">R² · Variance Explained</div><div class="val">${fmtPct(corrR2*100,0)}</div><div class="sub">of lead swings tied to spend</div></div>
+       <div class="kpi pur"><div class="label">Trend Slope</div><div class="val" style="font-size:20px">${corrSlope>=0?'+':''}${(corrSlope*1000).toFixed(2)}</div><div class="sub">leads per $1K spent</div></div>
+       <div class="kpi warn"><div class="label">Months Plotted</div><div class="val">${nC}</div><div class="sub">one point per month</div></div>
+     </div>
+     <div id="corrScatter"></div>
+     <div class="reco" style="margin-top:18px">
+       <div class="r ${coCls}">
+         <div class="rt"><span class="tag">${coTag}</span>${coHead}</div>
+         <p>${coBody}</p>
+       </div>
+     </div>
    </div>`;
   barChart(document.getElementById("leadBars"),{labels:MONTHS,data:LEADS_2025,color:"#00e676",yFmt:v=>fmtNum(v),tipFmt:v=>fmtNum(v)+" leads",unit:"Leads",height:230});
   barChart(document.getElementById("spendBars"),{labels:MONTHS,data:spend,color:"#3ba7ff",unit:"Spend",height:230});
   barChart(document.getElementById("cplBars"),{labels:MONTHS,data:cpl,color:"#b37feb",yFmt:v=>fmtUSDfull(v),tipFmt:v=>fmtUSDfull(v)+" / lead",unit:"Cost / lead",height:250});
+  scatterCorr(document.getElementById("corrScatter"),{points:corrPts,slope:corrSlope,intercept:corrInt,xTitle:"Monthly Marketing Spend →",yTitle:"Monthly Lead Volume →",height:410});
 }
 
 // ---- TAB 3: CHANNEL PERFORMANCE ----
