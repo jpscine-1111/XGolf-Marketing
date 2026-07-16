@@ -134,6 +134,12 @@
   .pill.good{background:rgba(0,230,118,.14);color:var(--green)}
   .pill.bad{background:rgba(255,82,82,.14);color:var(--loss)}
   .pill.mid{background:rgba(255,176,32,.14);color:var(--c3)}
+  /* Follow-Up Queue priority bands, by days since inquiry */
+  .pill.p90{background:rgba(255,82,82,.16);color:#ff5252}
+  .pill.p30{background:rgba(255,140,66,.16);color:#ff8c42}
+  .pill.p7{background:rgba(255,176,32,.16);color:#ffb020}
+  .pill.p0{background:rgba(0,230,118,.14);color:#00e676}
+  td.prio{border-left:3px solid transparent}
 
   .note{font-size:11.5px;color:var(--dim);margin-top:14px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6}
   .note b{color:var(--muted)}
@@ -243,6 +249,7 @@
   <section class="tab-panel" id="tab2"></section>
   <section class="tab-panel" id="tab3"></section>
   <section class="tab-panel" id="tab5"></section>
+  <section class="tab-panel" id="tab9"></section>
   <section class="tab-panel" id="tab6"></section>
   <section class="tab-panel" id="tab7"></section>
   <section class="tab-panel" id="tab4"></section>
@@ -345,12 +352,835 @@ const BASE_RESPONSE={
   monthly:{"2023-04":{total:123,contacted:4,never:119,sumDays:1316},"2023-05":{total:138,contacted:8,never:130,sumDays:494},"2023-06":{total:81,contacted:64,never:17,sumDays:24},"2023-07":{total:85,contacted:82,never:3,sumDays:22},"2023-08":{total:79,contacted:76,never:3,sumDays:0},"2023-09":{total:69,contacted:68,never:1,sumDays:0},"2023-10":{total:74,contacted:70,never:4,sumDays:0},"2023-11":{total:83,contacted:77,never:6,sumDays:0},"2023-12":{total:125,contacted:118,never:7,sumDays:0},"2024-01":{total:254,contacted:241,never:13,sumDays:0},"2024-02":{total:187,contacted:173,never:14,sumDays:1},"2024-03":{total:177,contacted:160,never:17,sumDays:0},"2024-04":{total:31,contacted:25,never:6,sumDays:0},"2024-05":{total:25,contacted:19,never:6,sumDays:0},"2024-06":{total:13,contacted:12,never:1,sumDays:0},"2024-07":{total:23,contacted:22,never:1,sumDays:0},"2024-08":{total:17,contacted:17,never:0,sumDays:0},"2024-09":{total:12,contacted:12,never:0,sumDays:0},"2024-10":{total:89,contacted:78,never:11,sumDays:0},"2024-11":{total:89,contacted:78,never:11,sumDays:0},"2024-12":{total:97,contacted:90,never:7,sumDays:0},"2025-01":{total:175,contacted:166,never:9,sumDays:0},"2025-02":{total:166,contacted:157,never:9,sumDays:0},"2025-03":{total:164,contacted:149,never:15,sumDays:0},"2025-04":{total:103,contacted:96,never:7,sumDays:0},"2025-05":{total:83,contacted:27,never:56,sumDays:2096},"2025-06":{total:56,contacted:32,never:24,sumDays:4363},"2025-07":{total:65,contacted:28,never:37,sumDays:3256},"2025-08":{total:54,contacted:31,never:23,sumDays:2542},"2025-09":{total:49,contacted:48,never:1,sumDays:94},"2025-10":{total:69,contacted:65,never:4,sumDays:111},"2025-11":{total:64,contacted:51,never:13,sumDays:544},"2025-12":{total:52,contacted:47,never:5,sumDays:146},"2026-01":{total:87,contacted:84,never:3,sumDays:163},"2026-02":{total:50,contacted:47,never:3,sumDays:126},"2026-03":{total:82,contacted:58,never:24,sumDays:114},"2026-04":{total:2,contacted:2,never:0,sumDays:4}}
 };
 
+// ---- Follow-Up Queue: per-lead rows for every ACTIVE lead in Export.xlsx ----
+// Source: Export.xlsx — one row per deduped lead (Inquiry Date + Email) whose Lead Status is one
+// of the six active/pipeline stages below. Dead Lead and Closed Lead- Sold are excluded: they need
+// no follow-up. Unlike the other BASE_* blocks these are raw records, not aggregates — the queue
+// has to name individual leads, and "days since inquiry" is recomputed against the current date on
+// every render, so ages keep aging as long as the export stays stale.
+// inquiryDayNum = whole days since 1970-01-01 UTC (same scale as dateToDayNum()).
+const FU_STATUS=["Contacted", "Nurture", "Intro Call", "Discovery", "FDD Review", "Approved"];
+const FU_SRC=["LinkedIn / Paid Ads", "List Import", "Web Form (Ninja)", "Web Form (Other)", "Website (Direct)"];
+const FU_RATING=["", "Hot"];
+// [name, city, state, statusIdx, sourceIdx, ratingIdx, inquiryDayNum, daysToFirstContact|null]
+const BASE_FOLLOWUP_ROWS=[
+["Kevin Rosr","Vallejo","California",1,4,1,19455,null],
+["Joel Gabriel","Redondo Beach","California",1,4,1,19457,null],
+["Jacqueline Joshiakar","Temple city","California",1,4,1,19460,null],
+["Richard Morris","Valencia","California",1,4,1,19462,null],
+["Jim Battle","Torrance","California",1,4,1,19465,null],
+["Thomas Troutner","Novato","California",1,4,1,19470,null],
+["Hank Wells","Venice","California",1,4,1,19471,null],
+["Alex Khan","Falmouth","Massachusetts",1,4,1,19472,857],
+["Michael Liang","Fremont","California",1,4,1,19481,null],
+["Richard Moris","Valencia","California",1,4,1,19482,null],
+["Brandon Arata","","Washington",1,0,1,19484,null],
+["Alex Gutierrez","Newport Beach","California",1,4,1,19488,null],
+["Riley Koubek","Costa Mesa","California",1,4,1,19488,null],
+["Mike Rut","Newport Beach","California",1,4,1,19496,null],
+["Sean Mcnulty","Arlington","Washington",1,4,1,19496,null],
+["Jeffrey Zuckerman","Los Angeles","California",1,4,1,19497,null],
+["Geoffroy Raby","Redwood City","California",1,4,1,19498,12],
+["Munish Ahuja","Danville","California",1,4,1,19498,null],
+["Michael Barrientez","Clovis","California",1,4,1,19501,null],
+["Charles Ju","LOS ANGELES","California",1,4,1,19505,null],
+["Jonathan Cabrera","Pasadena","California",1,4,1,19509,null],
+["Paul Liu","Bellevue","Washington",1,4,1,19509,14],
+["Brock Davis","Apple Valley","California",1,4,1,19516,0],
+["Jeremy Williams","Sacramento","California",1,4,1,19523,0],
+["Joseph Philip","LAGUNA NIGUEL","California",1,4,1,19526,0],
+["David Harwood","Rancho Mission Viejo","California",1,4,1,19532,0],
+["Kenneth Smith","Bakersfield","California",1,4,1,19534,0],
+["Chuck Aksland","Lacey","Washington",1,4,1,19535,0],
+["Alicia Ross","BAKERSFIELD","California",1,4,1,19538,0],
+["David Johnson","Bakersfield","California",1,4,1,19541,0],
+["Paul Singh","Rocklin","California",1,4,1,19542,0],
+["Paul Marzolf","Bellevue","Washington",1,4,1,19543,0],
+["June Angel","fairfield","California",1,4,1,19548,0],
+["Bruce Macdonald","Folsom","California",1,4,1,19553,0],
+["Teresa Ruiz","Bakersfield","California",1,4,1,19553,0],
+["Michael Michel","Fontana","California",1,4,1,19558,0],
+["Shopia Cooper","Burbank","California",1,4,1,19562,1],
+["Adam Benjamin","Pasadena","California",1,4,1,19563,0],
+["William Monks","Sacramento","California",1,4,1,19563,0],
+["Ajay Randhawa","San Jose","California",1,4,1,19564,0],
+["Scott Magladry","Redding","California",1,4,1,19564,0],
+["Jennifer Obrien","California","California",1,4,1,19570,0],
+["Sayed Shah","San Marcos","California",1,4,1,19573,0],
+["Joseph Bae","Los Angeles","California",1,4,1,19579,0],
+["Melissa Steidlmayer","Yuba City","California",1,4,1,19584,0],
+["Chris Leguluche","Danville","California",1,4,1,19586,0],
+["Lorne Fierbach","Los Angeles","California",1,4,1,19592,0],
+["Steven E Johnson","Chino Hills","California",1,4,1,19595,0],
+["Ashly Fink","West Sacramento","California",1,4,1,19596,0],
+["Derrik Holmes","Turlock","California",1,4,1,19608,0],
+["Randy Mathers","Longview","Washington",1,4,1,19625,0],
+["Ryan Miller","Yucaipa","California",1,4,1,19625,0],
+["Will Fonsavan","Castro Valley","California",1,4,1,19625,0],
+["Oliver Bohlman","BAINBRIDGE ISLAND","Washington",1,4,1,19628,0],
+["Richard Michel","Fontana","California",1,4,1,19629,0],
+["Yong Phou","Irvine","California",1,4,1,19636,0],
+["Scott Murphy","Fresno","California",1,4,1,19641,0],
+["Benjamin De La Torre","Valencia","California",1,4,1,19647,0],
+["Jon Frame","Fresno","California",1,4,1,19648,0],
+["Jennifer Obrien","California","California",1,4,1,19651,0],
+["Clinton Lambert","Edmonds","Washington",1,4,1,19652,0],
+["Stephen King","Sacramento","California",1,4,1,19667,0],
+["Stephen Monahan","Dublin 18","California",1,4,1,19668,0],
+["Jeff Feinman","Corte Madera","California",1,4,1,19675,0],
+["James Lin","San Jose","California",1,4,1,19676,0],
+["Jared Gordon","Rancho Cucamonga","California",1,4,1,19676,0],
+["Peter Chin","Fontana","California",1,4,1,19679,0],
+["Bren Brazil","Montrose","California",1,4,1,19690,0],
+["Nimisha Dhawan","San Francisco / Bay Area","California",1,4,1,19691,0],
+["Sam Brenner","Marina Del Rey","California",1,4,1,19695,0],
+["Bob Banks","Concord","California",1,4,1,19704,0],
+["Dipesh Gadhvi","Sidcup, Kent, UK","California",1,4,1,19705,0],
+["Jenna Hewitt","Temecula","California",1,4,1,19705,0],
+["Seth Steingraeber","Lakeside","California",1,4,1,19705,0],
+["William Beaton","San Ramon","California",1,4,1,19705,0],
+["Joe Conner","Culver City","California",1,4,1,19708,0],
+["Carter Olson","Santa Rosa","California",1,4,1,19717,0],
+["Sam Chun","Danville","California",1,4,1,19717,0],
+["Anthony Onisko","Vacaville","California",1,4,1,19721,0],
+["Nick Miller","Brentwood","California",1,4,1,19721,0],
+["Paige Miller","Oakley","California",1,4,1,19722,0],
+["Vaishali Gade","Burlington","Massachusetts",1,4,1,19724,0],
+["Jared Graveline","Seattle","Washington",1,4,1,19725,0],
+["Adam Geeb","Santa Barbara","California",1,4,1,19732,0],
+["Aaron Trammell","Sacramento","California",1,4,1,19734,0],
+["Christian Saulnier","Hermosa Beach","California",1,4,1,19734,0],
+["Daniel Parker","Seattle","Washington",1,4,1,19738,0],
+["John Valenti","Dana Point","California",1,4,1,19740,0],
+["Paul Seo","Santa Rosa","California",1,4,1,19740,0],
+["Tim Billing","San diego","California",1,4,1,19741,0],
+["Craig Brown","Eureka","California",1,4,1,19742,0],
+["Brett Hertz","La Crescenta","California",1,4,1,19743,0],
+["Craig Scott","Calabasas","California",1,4,1,19744,0],
+["Len Kay","Los Angeles","California",1,4,1,19744,0],
+["Kelly Gutilla","El Dorado Hills","California",1,4,1,19746,0],
+["Tim Schumann Ii","Costa Mesa","California",1,4,1,19746,0],
+["Joseph Vaccarello","GARDENA","California",1,4,1,19747,0],
+["Ted Edman","San Diego","California",1,4,1,19752,0],
+["Tammy Mccarley","SACRAMENTO","California",1,4,1,19757,0],
+["Robert Zajac","Vancouver","Washington",1,4,1,19758,0],
+["Tim Mcgoldrick","San Francisco","California",1,4,1,19759,0],
+["Cameron Rambo","san clemente","California",1,4,1,19763,0],
+["Sajid Salimi","Berkeley","California",1,4,1,19765,0],
+["Brett Saks","Bainbridge Island","Washington",1,4,1,19769,0],
+["David Pierce","RIPON","California",1,4,1,19769,0],
+["Aaron Bareuther","Renton","Washington",1,4,1,19770,0],
+["Joe Cinotto","Issaquah","Washington",1,4,1,19770,0],
+["Eric Gardiner","Winchester","California",1,4,1,19774,0],
+["Jeff Tarpley","Pleasanton","California",1,4,1,19774,0],
+["Ben Hernstedt","Sacramento","California",1,4,1,19776,1],
+["Andrew Haley","Pleasanton","California",1,4,1,19779,0],
+["Duane Whisler","Aberdeen","Washington",1,4,1,19779,0],
+["Brian Cruz","Chula Vista","California",1,4,1,19782,0],
+["Gilbert Saguid","San Diego","California",1,4,1,19783,0],
+["Ryan Inchaurregui","Clovis","California",1,4,1,19783,0],
+["Ken Chalmers","Santa Ana","California",1,4,1,19785,0],
+["Joshua Heimer","Rio Vista","California",1,4,1,19786,0],
+["Edward Goldthwait","Sammamish","Washington",1,4,1,19789,0],
+["Joey Crawford","Los Angeles","California",1,4,1,19794,0],
+["Michael Nogaj","Temecula","California",1,4,1,19797,0],
+["Luis Camorlinga","Bakersfield","California",1,4,1,19798,0],
+["Adalberto Araiza","All","California",1,4,1,19804,0],
+["Jeremy Luiten","Renton","Washington",1,4,1,19804,0],
+["Kirk Bolling","Rancho Mission Viejo","California",1,4,1,19804,0],
+["Casey Nichols","Seattle","Washington",1,4,1,19805,0],
+["Bill Johnson","Costa Mesa","California",1,4,1,19812,0],
+["Nancy Egan","San Clemente","California",1,4,1,19814,0],
+["Thomas Mcclure","San Carlos","California",1,4,1,19814,0],
+["Nate Slonaker","Port Orchard","Washington",1,4,1,19858,0],
+["Scott Elvidge","Otis Orchards","Washington",1,4,1,19872,0],
+["Ken Tipton","Studio City","California",1,4,1,19908,0],
+["Brian Buser","Danville","California",1,4,1,19930,0],
+["John Saddi","San Bruno","California",1,4,1,19942,0],
+["Kevin Patel","Southaven","Mississippi",1,4,1,19989,0],
+["Zach Silva","Sacramento","California",1,4,1,19996,0],
+["Ricardo Palma","San Jacinto","California",1,4,1,19999,0],
+["Shane Wang","San Jose","California",1,4,1,20000,0],
+["Steve Rhoy","Lincoln","California",1,4,1,20006,0],
+["Jeff Moran","DANVILLE","California",1,4,1,20011,0],
+["Jeffrey Aguilera","Bakersfield","California",1,4,1,20013,0],
+["Kristina Mcleskey","Ridgefield","Washington",1,4,1,20013,0],
+["Shawn Tyler","Bellevue","Washington",1,4,1,20015,0],
+["Michael Walker","Brea","California",1,4,1,20017,0],
+["Jon-lee Hawarden","Bakersfield","California",1,4,1,20019,0],
+["Michael Walters","Los Angeles","California",1,4,1,20025,0],
+["Maheshkumar Kaneria","stevenson ranch","California",1,4,1,20038,0],
+["Matthew Ippolito","San Francisco","California",1,4,1,20039,0],
+["Arvind Mann","Sacramento","California",1,4,1,20044,0],
+["Chris Nicolette","Pleasant hill","California",1,4,1,20052,0],
+["Mike Ratajczak","Lake Tahoe Region","California",1,4,1,20052,0],
+["Ashley Banta","Ukiah","California",1,4,1,20057,0],
+["Blake Watkins","Bakersfield","California",1,4,1,20060,0],
+["Caleb Richard","Fresno","California",1,4,1,20060,0],
+["Sarah Watkins","Bakersfield","California",1,4,1,20060,0],
+["Dan Stone","San Diego","California",1,4,1,20061,0],
+["Brett Holland","Spring valley lake","California",1,4,1,20074,0],
+["Mark Hohman","Ridgefield","Washington",1,4,1,20079,0],
+["Harry Bugarin","CARSON","California",1,4,1,20083,null],
+["Stephen Berg Ii","Rocklin","California",1,4,1,20083,0],
+["Brock Schimbeno","Bozeman","Montana",5,4,1,20089,0],
+["Terrance Hendrickson","Plumas Lake","California",1,4,1,20090,null],
+["April Barry","Yorba Linda","California",1,4,1,20094,0],
+["Travis Reed","Bowie","Maryland",1,4,1,20094,0],
+["Patrick Treshler","Gustine","California",1,4,1,20097,0],
+["Rob Andrews","Mill Valley","California",1,4,1,20099,0],
+["Kyle Dipentima","walnut creek","California",1,4,1,20101,0],
+["Prashanth Ramanathan","Bellevue","Washington",1,4,1,20110,0],
+["Andrew Kang","San Diego","California",1,4,1,20111,null],
+["Triston Miller","Spokane Valley","Washington",1,4,1,20112,0],
+["Christopher Timothy","Alameda","California",1,4,1,20119,0],
+["Chris Ryder","Lakewood Ranch","Florida",1,4,1,20121,0],
+["Sumit Parmar","Temecula","California",1,4,1,20123,0],
+["Jose Silva","Dracut","Massachusetts",1,4,1,20127,0],
+["Jeff Birch","Covington","Washington",1,4,1,20130,0],
+["Joe Valenzuela","Brentwood 94513","California",1,4,1,20131,0],
+["William Treshler","Gustine","California",1,4,1,20133,0],
+["Ram Viswanadha","Dublin","California",1,4,1,20136,0],
+["Dylan Skerrett","Corte Madera","California",1,4,1,20138,0],
+["Travis Catalano","South Lake Tahoe","California",1,4,1,20140,0],
+["Paul Stuit","Issaquah","Washington",1,4,1,20143,0],
+["George Dejesus","Antioch","California",1,4,1,20146,0],
+["Hovsep Oganesyan","Pasadena","California",1,4,1,20147,0],
+["Nick Ostroff","Santa Monica","California",1,4,1,20147,0],
+["Nick Reed","NEWPORT BEACH","California",1,4,1,20151,0],
+["Nicholace Sorenson","Yakima","Washington",1,4,1,20152,0],
+["Michael Beaufore","Cameron Park","California",1,4,1,20154,0],
+["Anthony Hillen","Salinas","California",1,4,1,20155,0],
+["David Velasquez","Dublin","California",1,4,1,20158,0],
+["Ross","Redding","California",1,4,1,20158,0],
+["Richard Speaker","Chino","California",1,4,1,20163,0],
+["Daniel Davenport","Los Gatos","California",1,4,1,20164,0],
+["Claire Taghiof","Los Angeles","California",1,4,1,20168,0],
+["Sania Sharma","Anaheim","California",1,4,1,20171,0],
+["Jermaine Cruz","Costa Mesa","California",1,4,1,20173,0],
+["Douglas Fieldhouse","Woodway","Washington",1,4,1,20178,0],
+["Todd Thompson","Kingsburg","California",1,4,1,20178,0],
+["Garrett Macias","Templeton","California",1,4,1,20179,0],
+["erik van stry","","",1,3,0,20180,0],
+["Thomas Muscarella","Santa Clarita","California",1,4,1,20187,0],
+["Matt Cuneo","SAN FRANCISCO","California",1,4,1,20189,0],
+["Nick Smith","Temecula","California",1,4,1,20192,0],
+["Stephen Trembley","Fresno","California",1,4,1,20192,0],
+["At oldest Requeno","Indio","California",1,4,1,20195,0],
+["Riley Gill","Bellevue","Washington",1,4,1,20195,0],
+["Kel Jackson","San Francisco","California",1,4,1,20199,0],
+["Chad Lue","Pasadena","California",1,4,1,20200,0],
+["Rick Juncker","SAN JOSE","California",1,4,1,20200,0],
+["Rahim Manji","Calgary","Alberta",1,4,1,20209,167],
+["Matt Yockey","St charles","Illinois",1,4,1,20212,0],
+["Abdur Rehman","Ajax","Ontario",1,4,1,20213,164],
+["Hank Yuan","Virginia Beach","Virginia",1,4,1,20213,0],
+["Harsha Vemulapalli","Detroit","Michigan",1,4,1,20213,164],
+["John Ryan","Whistler","",1,4,1,20213,null],
+["Michael Parkes","Clarksville","Tennessee",1,4,1,20213,null],
+["Rei Sikora","Sumter","South Carolina",1,4,1,20213,164],
+["Roderick Lindenmuth","Columbus","Ohio",1,4,1,20213,164],
+["Rohan Dhuper","Old Westbury","New York",1,4,1,20213,null],
+["SHANNON HOOKS","MENDENHALL","Mississippi",1,4,1,20213,142],
+["Amanda Croft","Cambridge","Ontario",1,4,1,20214,null],
+["David Jang","Wainwright","Alberta",1,4,1,20214,null],
+["Brett Volini","Hoffman Estates","Illinois",1,4,1,20215,null],
+["Clay Brown","Baton Rouge","Louisiana",1,4,1,20216,null],
+["Preet Sekhon","San Anselmo","California",1,4,1,20216,null],
+["Nick Karalis","VILLANOVA","Pennsylvania",1,4,1,20218,null],
+["Anthony McGahan","Carlow","Alabama",1,4,1,20220,null],
+["Brian Campo","CHESTERFIELD","Virginia",1,4,1,20220,null],
+["HUNTER DAIGLE","Madisonville","Louisiana",1,4,1,20220,null],
+["Jeremy Kindle","Houston","Texas",1,4,1,20222,null],
+["Will Harness","Searcy","Arkansas",1,4,1,20222,null],
+["Matt Cook","Germantown","Tennessee",1,4,1,20223,null],
+["Jason Cappelletti","Covington","Washington",1,4,1,20224,11],
+["Kris Meszaros","Edmonton","Alberta",1,4,1,20226,null],
+["David Nichols","Fairfield","California",1,4,1,20227,null],
+["Nelson Aguas","Davie","Florida",1,4,1,20227,null],
+["Eric Munson","Sunset Hills","Missouri",1,4,1,20228,127],
+["Maxwell Marohn","Maple Lake","Minnesota",1,4,1,20228,127],
+["Michael Campos","Dallas","Texas",1,4,1,20228,121],
+["Brandon Cunningham","Corpus Christi","Texas",1,4,1,20229,null],
+["Jeff Stanislow","Lutz","Florida",1,4,1,20229,null],
+["Shellby Stowers","Dawsonville","Georgia",1,4,1,20229,null],
+["Tom Molen","Boca Raton","Florida",1,4,1,20229,null],
+["Brandon Utke","Sacramento","California",1,4,1,20230,null],
+["Doug Boozer","Chambersburg","Pennsylvania",1,4,1,20230,null],
+["Doug Hale","Leander","Texas",1,4,1,20230,null],
+["Matthew Smith","Spring Hill","Florida",1,4,1,20230,null],
+["Ferris Butler","CHESTER","Maryland",1,4,1,20231,null],
+["Jennifer Obrien","Mount Pleasant","Arizona",1,4,1,20231,null],
+["Kent Cooper","Cocoa Beac","Florida",1,4,1,20231,null],
+["Raymond Goode Jr","Waldorf","Maryland",1,4,1,20231,null],
+["Rishi Dhawan","Red Deer","Alberta",1,4,1,20231,null],
+["Ryan Newsom","Kingwood","Texas",1,4,1,20232,null],
+["Blake Stoddart","Toronto","Ontario",1,4,1,20234,null],
+["Scott Pullen","Lynn Haven","Florida",1,4,1,20234,null],
+["Meena Meka","Corona del Mar","California",1,4,1,20235,null],
+["Steven Curran","west palm beach","Florida",1,4,1,20235,156],
+["mansoor nishat","OAKVILLE","Ontario",1,4,1,20235,120],
+["Joseph Collier","Clarksvile","Michigan",1,4,1,20236,null],
+["MATTHEW MCCLAIN","Barnhart","Missouri",1,4,1,20236,119],
+["Michael Donnon","Washington Crossing","Pennsylvania",1,4,1,20237,null],
+["Shepard Patan","Happy Valley","Oregon",1,4,1,20237,154],
+["James Jarvis","Chesapeake","Virginia",1,4,1,20238,null],
+["Juan Pena","Santo Domingo","Massachusetts",1,4,1,20238,null],
+["Richard R Lopez Jr","Soledad","California",1,4,1,20240,null],
+["Terry Morris","Woodstock","Georgia",1,4,1,20240,null],
+["Dan Bengyak","Newburgh","New York",1,4,1,20241,114],
+["Zach Caldwell","Bowling Green","Kentucky",1,4,1,20241,null],
+["Alan MacNamee","Dublin","California",0,4,1,20242,234],
+["Jacobo Rieber","Aventura","Florida",0,4,1,20242,234],
+["Brian Ramos","The Woodlands","Texas",0,4,1,20244,238],
+["NICASIO JONES","Riverview","Florida",0,4,1,20246,236],
+["Inderjit Singh","Senoia","Georgia",0,4,1,20247,235],
+["Jimmy Vann","Snoqualmie","Washington",0,4,1,20248,234],
+["Joshua Fricks","Port Saint Lucie","Florida",0,4,1,20248,234],
+["Preston George","Pooler","Georgia",0,4,1,20248,234],
+["Ryan Furr","Columbus","Indiana",0,4,1,20248,234],
+["Adam Mitchell","Chicago","Illinois",1,4,1,20250,null],
+["Scott Wisner","Three Lakes","Wisconsin",1,4,1,20250,20],
+["Shiv Patel","Pensacola","Florida",0,4,1,20250,232],
+["Chris Morgan","Manchester","New Hampshire",1,4,1,20251,null],
+["Jordan Gosin","NEW YORK","New York",1,4,1,20251,null],
+["Jordan Latham","Midlothian","Texas",0,4,1,20251,235],
+["Hunter Althoff","New Palestine","Indiana",1,4,1,20252,192],
+["Chris Cool","Chester","Maryland",1,4,1,20253,null],
+["Grady McCavitt","Bel Air","Maryland",1,4,1,20253,null],
+["Derek McCallum","Johns Creek","Georgia",1,4,1,20254,99],
+["Joseph Farmer","Glen Allen","Virginia",0,4,1,20254,232],
+["Tom Schrock","Ashburn","Virginia",0,4,1,20255,null],
+["Cory Kambak","Bozeman","Montana",0,4,1,20256,83],
+["Perry Camacho","Fuquay Varina","North Carolina",0,4,1,20256,99],
+["Josh Moskowitz","Moorpark","California",0,4,1,20257,82],
+["Matt O’Brien","Tallahassee","Florida",0,4,1,20257,82],
+["DARREL EDMONDS","NEWARK","Delaware",1,2,1,20264,63],
+["Inder Singh","Toronto","",0,2,1,20264,null],
+["Nhat Nguyen","Philadelphia","Pennsylvania",1,2,1,20264,75],
+["Anthony Lanzetta","Secane PA","Pennsylvania",0,2,1,20266,67],
+["Stephen Atwell","Mt Juliet","Tennessee",1,2,1,20266,null],
+["Tom Winegardner","Prince Frederick","Maryland",0,2,1,20266,null],
+["Neil Kayastha","Laytonsville","Maryland",0,2,1,20267,null],
+["Ryan Montgomery","Anchorage","Alaska",1,2,1,20269,null],
+["Dennis Porter","Ocean View","Delaware",1,2,1,20270,null],
+["Levi Niendorf","SEMINOLE","Florida",1,2,1,20270,51],
+["John Garuti","Punta Gorda","Florida",0,2,1,20271,null],
+["Nassir Hatoum","Marietta, GA","Georgia",0,2,1,20271,215],
+["Tommy Vasiliou","Cincinnati","Ohio",0,2,1,20271,215],
+["Mishkat Lightwala","Atlanta","Georgia",0,2,1,20274,null],
+["Brendan Doney","Los Angeles","California",2,2,1,20275,241],
+["Shanon Burgoine","PALM COVE","",1,2,1,20276,null],
+["Steve Meeker","Fairhope, AL","Alabama",1,2,1,20276,null],
+["Aaron Schell","Choctaw","Oklahoma",0,2,1,20278,208],
+["Steve Sattazahn","Hershey PA","Pennsylvania",0,2,1,20278,null],
+["Colin Hall","Hernando","Mississippi",0,2,1,20281,65],
+["Andrew Pickard","Argyle","Texas",1,2,1,20285,null],
+["Michael Allen","Salt Lake City","Utah",0,2,1,20285,197],
+["Rodney Durban","Biltmore Lake","North Carolina",1,2,1,20285,36],
+["Vince Banh","Lasalle","Ontario",0,4,1,20285,null],
+["Dayton Packebush","Amarillo","Texas",0,2,1,20286,200],
+["Karl Knudsen","Delray Beach","Florida",1,2,1,20286,null],
+["Tommy Daigle","Livingston","Louisiana",1,2,1,20286,null],
+["Chander Badwal","Kenilworth","Illinois",1,2,1,20287,null],
+["NACHUM SOROKA","WOODMERE","New York",0,2,1,20287,199],
+["sam vs","Toronto","Ontario",1,4,1,20288,10],
+["Ashley Zook","Manchester","New Hampshire",1,2,1,20289,null],
+["Daniel OBrien","Swedesboro","New Jersey",1,2,1,20289,null],
+["Estevan Benavides","Dinuba","California",0,2,1,20289,193],
+["Sunny Patel","Naperville","Illinois",1,2,1,20289,10],
+["Karen Biddle","Charlotte","North Carolina",0,4,1,20291,null],
+["Michael Hodgdon","Palmcoast","Florida",1,2,1,20291,null],
+["John Stupey","Marysville","Washington",0,2,1,20293,189],
+["Jang Cho","Peachtree corners","Georgia",1,2,1,20294,20],
+["Robin Wallace","alexandria","Louisiana",1,2,1,20294,null],
+["Ben Bornfleth","Summerville","South Carolina",0,2,1,20296,190],
+["Lance Barrett","Sault Sainte Marie","Michigan",1,2,1,20296,null],
+["Michael Guidry","Tulsa","Oklahoma",0,4,1,20296,null],
+["Rafy Bassali","Augusta","Georgia",1,2,1,20296,148],
+["Shane Barncord","Orlando","Florida",2,2,1,20296,190],
+["Andr Pereira","Mississauga","Ontario",1,4,1,20297,147],
+["Austin Huff","Sioux Falls SD","South Dakota",0,2,1,20297,null],
+["Brian Becze","Fort Mill","South Carolina",0,2,1,20297,null],
+["Dylan Tatum","Dawsonville","Georgia",0,4,1,20297,null],
+["Michael Edwards","Huntersville","North Carolina",0,2,1,20297,189],
+["TC Fitzgerald","Bowie","Maryland",1,2,1,20297,null],
+["Vee Kaur","Sharon","Massachusetts",1,2,1,20297,null],
+["Jacob Hudson","Pike Road","Alabama",1,2,1,20298,null],
+["Marc Drayton","Wesley Chapel","Florida",1,2,1,20298,null],
+["Robert Pomeroy","Franklin","Tennessee",1,2,1,20298,null],
+["Ron Casey","EXTON","Pennsylvania",1,2,1,20299,null],
+["Eli Lux","Marina Del Rey","California",0,4,1,20300,null],
+["Kevin Finnerty","Westhampton Beach, NY","New York",5,2,1,20300,12],
+["TJ Brogan","austin","Texas",0,2,1,20301,null],
+["Russell Luttrell","heath","Texas",1,2,1,20303,1],
+["Suresh Ramani","Chantilly","Virginia",0,2,1,20303,null],
+["John Perez","San Antonio","Texas",1,2,1,20304,10],
+["Josh Fields","Maple Valley","Washington",1,2,1,20304,null],
+["Morton Guy","Tuscaloosa","Alabama",1,2,1,20304,17],
+["Joshua Cravo","Port Saint Lucie","Florida",1,2,1,20305,null],
+["Thomas Knych","Middleton","Massachusetts",0,2,1,20306,null],
+["Cory Olson","Glendora","California",0,2,1,20307,175],
+["Steven Tardanico","Sturbridge","Massachusetts",0,2,1,20307,175],
+["ROGER GIBSON","SPRING HILL","Tennessee",0,2,1,20309,173],
+["Cara Fischer","Crozet","Virginia",1,2,1,20310,4],
+["Jason G Halaby","Gilbert","Arizona",1,2,1,20310,null],
+["Kent Kozlowski","FORT MYERS","Florida",0,2,1,20310,176],
+["William Stanley","Nashua","New Hampshire",1,2,1,20310,4],
+["Adalberto “Beto Araiza","Temecula","California",1,2,1,20311,79],
+["Pedram Nik","Beverly Hills","California",1,2,1,20311,4],
+["Jit00 Patel","McDonough","Georgia",1,2,1,20312,170],
+["Melissa Oden","Augusta","Georgia",0,2,1,20312,null],
+["Chris Whaley","Jacksonville","North Carolina",0,2,1,20313,173],
+["Don Colman","Alamo","California",0,2,1,20313,null],
+["Quinlan Laing","Midland","Texas",1,2,1,20313,null],
+["Steven Lee Olsen","Barrie","Ontario",0,4,1,20314,null],
+["JAMES FELSING","Las Vegas","Nevada",1,2,1,20315,null],
+["Nicole Salerno","Hodgkins","Illinois",1,2,1,20316,null],
+["Subhan Ahmed Emran","toronto","",1,2,1,20316,9],
+["David Grates","Las Vegas","Nevada",1,2,1,20317,10],
+["Sonny Malick","Boston","Massachusetts",1,2,1,20317,5],
+["Aaron Barker","Tampa","Florida",1,2,1,20318,null],
+["Fahim Memon","Northridge","California",0,2,1,20318,null],
+["jacob levy","wesley chapel","Florida",0,2,1,20319,167],
+["Christian McBrearty","Bluffton","New York",0,2,1,20320,166],
+["Sean Ternes","Fargo","North Dakota",0,2,1,20320,null],
+["Jordan Bick","Davie","Florida",1,2,1,20321,28],
+["Nicholas Walsh","Swansea","",0,2,1,20321,null],
+["Roger Burnett","Sapulpa","Oklahoma",0,2,1,20322,164],
+["Tracy Bowen","Redding","California",1,2,1,20322,null],
+["Keven Briggs","Mount Dora","Florida",0,2,1,20323,163],
+["Daniel Petersen","Gilbert","Arizona",1,2,1,20325,3],
+["Meetul Patel","Winchester","Virginia",0,2,1,20325,161],
+["Douglas Coleman","New York","New York",0,4,1,20327,159],
+["Justin Akers","Raymore","Missouri",1,2,1,20327,2],
+["Nathan Madlock","Brasstown NC","North Carolina",0,2,1,20328,null],
+["angel love","West vancouver","",0,4,1,20328,null],
+["jeff petersen","Tyler","Texas",0,2,1,20329,153],
+["Mudassar Khan","Mississauga","Ontario",0,4,1,20330,null],
+["Nirmal Patel","Battle Creek","Michigan",0,2,1,20332,1],
+["Lesley Camphaug","Salmon Arm","",1,4,1,20333,1],
+["Maurice Kiely","Ruther Glen","Virginia",0,2,1,20333,1],
+["Joshua Clark","medina","Ohio",0,2,1,20334,0],
+["Marco Saavedra","Sparks","Nevada",0,2,1,20335,1],
+["Michael Corrigan","Howell Township","New Jersey",0,2,1,20335,4],
+["Pranav Mathur","Naperville","Illinois",0,2,1,20336,3],
+["Vicky Puchi","Tucson","Arizona",0,2,1,20336,3],
+["Catherine Davis","Salem","Virginia",0,2,1,20337,2],
+["Cameron Evans","Fernie British Columbia","",0,2,1,20338,1],
+["Andy Stock","Charlotte","North Carolina",1,2,1,20339,0],
+["Bernie Sopp","Ukiah","California",0,2,1,20339,2],
+["Karen Kohlan","Naples","Florida",0,2,1,20339,8],
+["Alexander Anetakis","PITTSBURGH","Pennsylvania",0,4,1,20341,0],
+["Erica Taylor","Maumelle","Arkansas",0,2,1,20341,1],
+["Maxwell Etherington","Port Elgin","Ontario",0,4,1,20341,1],
+["Stacie Shannon","Newark","Delaware",1,2,1,20341,1],
+["João Paulo Canas Simões","Funchal","",1,2,1,20342,0],
+["Haroon Kathrada","El dorado hills","California",0,2,1,20343,3],
+["James Foster","Weaverville","North Carolina",1,2,1,20343,3],
+["Morgan Kenny","Gaithersburg","Maryland",0,2,1,20344,2],
+["Aaron Maassel","Sylvania","Ohio",1,2,1,20345,1],
+["Melissa Creswell","Berlin","Maryland",0,2,1,20345,1],
+["Ryan Buesing","Sioux Falls","South Dakota",0,2,1,20347,1],
+["Zach Scearce","Indianapolis","Indiana",0,2,1,20348,1],
+["Scott Sopko","Holly Springs","North Carolina",0,2,1,20349,0],
+["Joanne Miller","Mandurah, WA, 6210","Arizona",0,2,1,20350,3],
+["Paul Tardy","East Brunswick","New Jersey",0,2,1,20350,3],
+["Randall Fleenor","GUYTON","Georgia",1,2,1,20350,3],
+["Kelli Mallicote","Paris","Texas",1,2,1,20351,2],
+["Anthony Melia","Sutton","Massachusetts",0,2,1,20352,1],
+["Eric Klein","Mountain View","California",0,2,1,20352,1],
+["Carissa Jay","Spring Hill, TN","Tennessee",0,2,1,20353,2],
+["Paul King","Chesterfield","Virginia",1,2,1,20353,2],
+["Michael Kelsey","Plain city","Ohio",0,2,1,20354,1],
+["Dan Brooks","Napa","California",1,2,1,20355,1],
+["Zak Eckerle","Bloomington","Indiana",1,2,1,20355,13],
+["Eric King","Raynham","Massachusetts",1,2,1,20356,1],
+["Howie Wahl","Sisters","Oregon",0,2,1,20357,5],
+["Lisa Jackson","Sumter","South Carolina",0,2,1,20357,3],
+["Jeff Ferguson","Madison","Mississippi",0,2,1,20359,3],
+["Breanne Chaney","Pensacola","Florida",1,2,1,20360,1],
+["Lindsay Ripley","Denver","Colorado",0,2,1,20360,2],
+["Bobby Mayo","Panama City","Florida",1,2,1,20361,2],
+["Mark Wolz","Fenton","Missouri",1,2,1,20361,1],
+["Brian Calatozzo","Swedesboro","New Jersey",1,2,1,20362,1],
+["EHSAN GOLZAR","CHARLOTTE","North Carolina",0,2,1,20362,1],
+["Hamad Nazir","Lakeville","Minnesota",0,2,1,20362,1],
+["Kevin Krippe","Sinking Spring","Pennsylvania",0,2,1,20362,0],
+["Vu Tri Minh Duong","Marietta","Georgia",0,2,1,20362,0],
+["Tyler Lawson","Ukiah","California",0,2,1,20363,4],
+["James Wilkinson","Everett","Washington",1,2,1,20364,4],
+["Sam Sandhu","Mississauga","Michigan",0,2,1,20365,3],
+["Slidell Resident","Slidell","Louisiana",0,2,1,20365,2],
+["Stephen Hancy","Pensacola","Florida",0,2,1,20366,1],
+["Andrew Cleary","Slingerlands","New York",0,2,1,20367,1],
+["Nilay Goyal","Oakville","",1,2,1,20368,1],
+["billy cooper","greenbrier","Arkansas",0,2,1,20368,0],
+["Nickolas Garcia","Miami","Florida",0,2,1,20369,1],
+["Payton Carson","Draper","Utah",0,2,1,20369,1],
+["Shane Lee","West Palm Beach","Florida",1,2,1,20369,0],
+["Chad Clark","Oakton","Virginia",1,2,1,20370,null],
+["Douglas Tinder","Blacksburg VA","Virginia",0,2,1,20370,1],
+["Abenezer Araya","north Chesterfield","Virginia",1,2,1,20371,3],
+["Derek Lies","Bruce Twp","Michigan",0,2,1,20373,2],
+["Derick Williford","Tyler","Texas",1,2,1,20373,1],
+["Henry Chan","Toronto","Ontario",0,4,1,20373,1],
+["Jennifer Lies","Romeo","Michigan",1,2,1,20373,null],
+["Michael Schimmel","Purcellville","Virginia",2,2,1,20373,2],
+["Rick Harman","Waxhaw","Delaware",1,2,1,20373,2],
+["John Lynam","York","Pennsylvania",2,2,1,20374,2],
+["Patrick Cochrane","Timmins","Ontario",1,4,1,20374,2],
+["Tim Paxton","Okemah","Oklahoma",0,2,1,20374,3],
+["Rodney Daly","Grasonville","Maryland",0,2,1,20375,1],
+["Christy Prescott","Heber city utah","Utah",0,2,1,20377,4],
+["tayri kaldas","Mays Landing","New Jersey",0,2,1,20378,3],
+["Brodie Mayhew","Banff","Alberta",0,4,1,20380,1],
+["Joe Staub","Plainfield","Illinois",0,2,1,20380,1],
+["Samarth Patel","Elizabethtown","Arizona",0,2,1,20380,1],
+["Stephen Simas","Albertson","New York",0,2,1,20380,1],
+["Jonathan Rouse","Glenwood springs","Colorado",0,2,1,20381,2],
+["Max Adcock","Madison","Mississippi",2,2,1,20381,3],
+["Benjamin Brenninkmeijer","Irvine","California",2,2,1,20383,1],
+["Dustin Davis","North Vancouver","",0,2,1,20383,1],
+["Jeff Stephen","Fayetteville, AR","Arkansas",0,2,1,20383,1],
+["jonathan hippe","williston","North Dakota",0,2,1,20383,1],
+["Robin Blanks","Central Point","Oregon",0,2,1,20384,4],
+["Ryan Burkhardt","St Petersburg & St. Augustine","Florida",0,2,1,20384,4],
+["Chaz Green","Twin Falls","Idaho",0,2,1,20385,3],
+["Michael Quinn","Arlington","Virginia",2,2,1,20385,3],
+["Rodrigo Bernales","SANTIAGO","",0,2,1,20385,3],
+["Patrick Haffey","SEATTLE","Washington",0,2,1,20386,2],
+["Dylan Johnson","galesburg","Illinois",2,2,1,20388,1],
+["Himan Garg","Shelbyville","Indiana",0,2,1,20388,1],
+["Julian Givens","Westerville","Ohio",0,2,1,20388,1],
+["Jason Sanders","Harlingen","Texas",0,2,1,20389,1],
+["Kareem H","SHARON","Massachusetts",2,2,1,20390,0],
+["lesly martinez","houston","Texas",0,2,1,20391,4],
+["Ian Weiss","New York","New York",0,4,1,20392,3],
+["Simone Monet-Williams","Newnan","Georgia",0,2,1,20392,3],
+["Vince Ciotoli","Williamsville","New York",2,2,1,20392,4],
+["Brian Flynn","Oak Ridge","Tennessee",1,2,1,20394,2],
+["Don Neese","Fort Myers","Florida",0,2,1,20394,1],
+["Robert Pieroni","Tuscaloosa","Alabama",0,2,1,20394,2],
+["Thomas Forrest","Gardnerville","Nevada",2,2,1,20394,1],
+["Zac Frankoviak","Highlands Ranch","Colorado",1,2,1,20394,1],
+["Dan Konjevic","Rockford","Illinois",0,2,1,20395,1],
+["Joshua Frye","Sault Ste Marie","Michigan",0,2,1,20396,1],
+["Barry Thwaits","Jeannette","Pennsylvania",0,2,1,20397,1],
+["Colin Richardson","Calgary","",2,2,1,20397,1],
+["Darren De Lapp","Sisters","Oregon",0,2,1,20397,1],
+["David Buss","Metamora","Illinois",1,2,1,20397,1],
+["Steven Wilkerson","Pearland","Texas",2,2,1,20397,1],
+["Tao Zhu","lehi","Utah",0,2,1,20397,1],
+["Wesley Klein","St Johns","Florida",0,2,1,20397,1],
+["Denis Waldron","Mohegan Lake","New York",0,2,1,20398,0],
+["Jesse Hall","San Tan Valley","Arizona",0,2,1,20398,5],
+["Brent Peterson","Temecula Ca","California",0,2,1,20400,3],
+["Kalpesh Patel","Munster","Illinois",0,2,1,20400,3],
+["Kyle Treon","Springboro","Ohio",2,2,1,20400,2],
+["Michael Gibbs","Kentwood","Michigan",0,2,1,20400,3],
+["Jeremy Kritzer","Windsor","Ontario",0,4,1,20401,85],
+["Nathan Curtis","Orono","Maine",0,2,1,20401,2],
+["Daniel Manne","BALLWIN","Missouri",0,2,1,20402,1],
+["David Curry","Mcdonough","Georgia",0,2,1,20402,1],
+["Christopher Engle","WEIRTON","West Virginia",2,2,1,20403,1],
+["Gerard Sokolis","Middle River","Maryland",2,2,1,20403,1],
+["JAMES JONES","RIO RANCHO","New Mexico",2,2,1,20404,2],
+["cruz schlegel","Albuquerque","New Mexico",0,2,1,20404,1],
+["Joe Factor","Shoreview","Minnesota",0,2,1,20405,1],
+["Shiv Patel","Montgomery","Alabama",0,2,1,20405,1],
+["Anne","Houston","Texas",0,4,1,20406,0],
+["Austin Stackpole","Cameron Park","California",0,2,1,20406,3],
+["Chris King","Mechanicsville","Virginia",0,2,1,20407,4],
+["John Lee","Delta","",0,2,1,20407,2],
+["Robert Tripodi","Bridgton","Maine",0,2,1,20407,4],
+["Wilhelm Lapica","Miami","Florida",1,2,1,20407,2],
+["John Wright","Ephrata","Pennsylvania",0,2,1,20408,4],
+["Logan Singleton","Tewksbury","Massachusetts",0,2,1,20408,4],
+["Tim Beever","Ephrata","Pennsylvania",0,2,1,20408,4],
+["Adam Neidhardt","Beverly","Massachusetts",0,2,1,20409,null],
+["DAN NAPOLEON","WHEATON, IL","Illinois",1,2,1,20409,null],
+["Christian Conville","Fort Wayne","Indiana",0,4,1,20410,76],
+["Rick McKay","Stansbury Park","Utah",0,4,1,20410,null],
+["Terry Mark","COLUMBUS","Georgia",0,2,1,20410,null],
+["jeff Schwerdt","Del Mar","Arizona",0,2,1,20410,76],
+["Derek Fry","Houston","Texas",0,2,1,20411,null],
+["Corinne Mansfield","Rochester","New York",0,2,1,20412,18],
+["Robert Hubbard","Santa Monica","California",0,4,1,20413,69],
+["Felipe Munoz","Kyle","Texas",0,2,1,20414,null],
+["Timothy Kruse","Byron Center","Michigan",0,2,1,20414,16],
+["Michael Goldenberg","Great Neck","New York",1,2,1,20415,9],
+["Daniel Grimborn","Pleasant Hill","California",1,2,1,20416,8],
+["Robert Flood","Minnetonka","Minnesota",1,2,1,20416,null],
+["Ryan Lailey","Calgary","Alabama",1,2,1,20416,null],
+["Zach Rubin","Long Island","New York",1,2,1,20416,null],
+["Wes Hopkins","Morgantown","West Virginia",0,2,1,20417,13],
+["Edward Blocker","Jacksonville","Florida",0,2,1,20419,null],
+["Donad Houk","Lees Summit","Missouri",0,2,1,20420,10],
+["Damien ware","seattle","Washington",1,2,1,20421,32],
+["John Ridgeway","Crawford","Oklahoma",0,2,1,20421,61],
+["Lyle Lundy","Lewisville","Texas",2,2,1,20423,59],
+["Mayron Herrera","Allen","Texas",2,2,1,20424,8],
+["Jesse Rogers","Manhattan Beach","Delaware",0,2,1,20425,1],
+["STEVE FINZEL","Terre Haute","Indiana",0,2,1,20425,1],
+["Marco Ponchielli","Sparta","New Jersey",1,2,1,20426,1],
+["Zach Byrne","Pittsburgh","Pennsylvania",0,2,1,20426,0],
+["FRANKLIN Kilson","Temple Hills","Maryland",0,2,1,20427,0],
+["Mark Marlow","Cambridge,MA","",2,2,1,20427,0],
+["William Su","Calgary","Alberta",0,4,1,20427,3],
+["Zack Cira","Wylie","Texas",1,2,1,20428,2],
+["Ben Chen","Whippany, NJ 07981","New Jersey",0,2,1,20429,1],
+["Peter Kucera","Norridge","Illinois",0,2,1,20429,1],
+["Russ Burke","Carleton","Michigan",2,2,1,20429,1],
+["Tracy LaChapelle","Falmouth","Massachusetts",0,2,1,20429,1],
+["Bradley Swidler","Camp Hill","Pennsylvania",0,2,1,20430,1],
+["Douglas Buchanan","Goffstown","New Hampshire",0,2,1,20430,1],
+["Joshua Hamel","Concord NH","New Hampshire",1,2,1,20430,3],
+["Christopher Currier","Sherman Oaks","California",0,2,1,20431,1],
+["Andrew Regan","Oregon City","Arizona",0,2,1,20433,1],
+["Dan Hanlon","East Greenwich","Rhode Island",1,2,1,20433,1],
+["Justin Sigstad","Reno","Nevada",0,2,1,20433,1],
+["Zach Brister","Monroe","Louisiana",0,2,1,20433,0],
+["john heath","Charlotte","Florida",0,2,1,20433,0],
+["Kolby Pedrie","Colorado Springs","Colorado",0,2,1,20434,0],
+["Thomas Garnier","St. Louis","Missouri",0,2,1,20435,3],
+["Sara Charaf","Troy","Michigan",0,2,1,20436,2],
+["Joseph Dawkins","Berlin","Maryland",0,2,1,20437,1],
+["Mark Heck","Columbus","Florida",0,2,1,20437,1],
+["Michael Arieta","Davison, Michigan","Michigan",2,2,1,20437,1],
+["Sienna Molu","Toronto","",0,2,1,20440,null],
+["Doug Nordman","Scottsdale","Arizona",2,2,1,20441,3],
+["Jeff Taillon","Richmond, VA","Virginia",0,2,1,20441,5],
+["Cole Baldyga","Charlotte","North Carolina",0,2,1,20442,3],
+["Kevin Stephen","Glen Ellyn, IL","Illinois",0,2,1,20442,4],
+["Kyle Lemond","Dawsonville","Georgia",0,2,1,20442,2],
+["Vazgen Plouzian","San Dimas","California",0,2,1,20442,2],
+["William Thompson","Meridian","Mississippi",2,2,1,20442,2],
+["Colin Lane","Lavon","Texas",0,2,1,20445,1],
+["Miguel Galindo","NY","New York",2,2,1,20446,2],
+["Nandish Patel","Langhorne","Pennsylvania",4,2,1,20446,5],
+["Prem Prakash","Toronto","",0,2,1,20447,null],
+["Ketan Patel","Frisco","Texas",0,2,1,20448,3],
+["Daniel McMillon","Colorado Springs","Colorado",0,2,1,20450,1],
+["Thomas Forney","Austin","Texas",1,2,1,20450,1],
+["Cody Stratton","Arlington","Texas",0,2,1,20451,4],
+["Eyob Dimberu","Ashburn","Virginia",0,2,1,20451,4],
+["George Schlott","Northport","New York",0,2,1,20452,3],
+["Jagandeep Sandhu","Canton","Michigan",1,2,1,20453,2],
+["Diane Satz","Scottsdale","Arizona",0,2,1,20454,1],
+["Hai Le","Warren","Rhode Island",2,2,1,20454,1],
+["Michael Lombardi","Glen cove, New York","New York",0,2,1,20454,1],
+["Ashley Sanders","Sacramento","",2,2,1,20455,3],
+["James Gray","West Islip","New York",0,2,1,20455,3],
+["Jamie Rathermel","Nashville","Tennessee",1,2,1,20455,0],
+["Brandon Keeley","Salem","New Hampshire",0,2,1,20456,2],
+["Britton Hill","South Jordan","Utah",0,2,1,20456,2],
+["Caleb Anderson","Paw paw","Michigan",0,2,1,20456,2],
+["Larry McQuaid","Windham","New Hampshire",0,2,1,20456,2],
+["Matthew Hennis","Pleasant Hill","California",0,2,1,20456,2],
+["Corey Campbell","peoria","Illinois",0,2,1,20457,1],
+["JOHN GIORGAKIS","baltimore md","Maryland",0,2,1,20457,1],
+["Ryan Boisvert","Meridian","Idaho",0,2,1,20457,1],
+["Wade Naidl","Racine","Wisconsin",0,2,1,20457,1],
+["Brett Bohls","Herndon","Virginia",0,2,1,20458,0],
+["Abdul Tharoo","Orlando","Florida",0,2,1,20459,2],
+["Myles Bazoian","El Segundo","California",0,4,1,20459,2],
+["Ron Parent","Boynton Beach","Florida",2,2,1,20459,2],
+["Frank Mastroianni","Greater Toronto Area","Ontario",0,4,1,20460,26],
+["Inderpreet Thind","Fresno","California",0,2,1,20460,1],
+["Pat Moore","Raleigh","North Carolina",0,2,1,20460,2],
+["Raj Chellani","Fremont","California",2,2,1,20461,1],
+["Thomas Cunningham","Boston","Massachusetts",2,2,1,20462,6],
+["Adrian Pearn","Vancouver","",0,4,1,20463,null],
+["Nick Ponte","Hampton","New Hampshire",0,2,1,20463,2],
+["Jason Sherrill","Ofallon IL","Illinois",1,2,1,20464,1],
+["Austin Hulbirt","Severna Park","Maryland",0,2,1,20466,1],
+["Myan Patel","Knoxville, TN","Tennessee",2,2,1,20466,1],
+["Ronald Forrest","royse city","Texas",0,2,1,20466,1],
+["Stephanie Zastrow","Fort Myers","Florida",0,2,1,20466,1],
+["Wm Wrightson","Oxford md","Maryland",0,2,1,20466,1],
+["Daryl Voska","South Barrington","Illinois",0,2,1,20467,1],
+["Deepak Aggarwal","Cincinnati","Ohio",0,2,1,20467,1],
+["TARA COSTA","Charlotte","New York",0,2,1,20467,1],
+["Eric MacDonald","South Lyon","Michigan",0,2,1,20469,4],
+["Jason Dritsan","","",4,3,0,20469,11],
+["Michael Stonge","Center Line","Michigan",0,2,1,20469,4],
+["Gene Harris","Warrenton","Missouri",1,2,1,20470,3],
+["Adam Gilliam","Howell","Michigan",0,2,1,20471,2],
+["Bill Carzon","Naples","Florida",0,2,1,20471,2],
+["Jaynil Patel","Plant City","Florida",0,2,1,20471,2],
+["Greg Garman","Matthews","North Carolina",1,2,1,20472,1],
+["Anthony Ulloa","Los Angeles","California",0,2,1,20473,1],
+["Mathew Fuller","Irvine","California",0,2,1,20473,1],
+["Maurice Nault","Cranston","Rhode Island",2,2,1,20473,1],
+["Michael Rogers","Mcallen","Texas",0,2,1,20473,1],
+["Murillo Silva","Lancaster","New Hampshire",0,2,1,20473,1],
+["Christopher Moore","Clovis","California",0,2,1,20474,2],
+["Steve Bartas","Parkville","Maryland",0,2,1,20474,null],
+["Caleb Anderson","paw paw","Michigan",0,2,1,20475,1],
+["Chris Walter","Richmond","Virginia",0,2,1,20475,1],
+["Joseph Freeman","O Fallon, MO","Missouri",0,2,1,20475,4],
+["Mark Menconi","Mundelein","Illinois",0,2,1,20475,1],
+["Ryan Worcester","Hingham","Massachusetts",0,2,1,20475,1],
+["Adam Gilliam","Hartland","Michigan",0,4,1,20476,0],
+["Bhavy GUpta","Edison","New Jersey",0,2,1,20476,0],
+["Douglas Seidlich","Manhattan Beach","California",0,2,1,20476,3],
+["MK Zgoda","Elkhorn","Nebraska",0,2,1,20476,0],
+["Mike Brennan","Naperville","Illinois",0,2,1,20476,3],
+["Tyler Bolin","Vancouver","Washington",0,2,1,20476,3],
+["Dan Powell","Fisher","Illinois",0,2,1,20477,2],
+["Spencer Crane","Pelham","Alabama",0,2,1,20477,2],
+["Irene Daanen","Buckeye,Az.","Washington",0,2,1,20478,1],
+["Joe Britt","Grand Island","New York",0,2,1,20478,1],
+["Naeem Mahesania","Austin","Texas",0,2,1,20479,1],
+["Mark Holt","Willis","Texas",0,2,1,20480,1],
+["Scott Crowley","Portage, MI","Michigan",0,2,1,20480,1],
+["Jae Kim","University Place","Washington",0,2,1,20481,1],
+["Jason Farmer","Statesboro","Georgia",0,2,1,20481,0],
+["Justin Williams","Frisco","Texas",0,2,1,20481,1],
+["Shawn Poitra","Belcourt","North Dakota",0,2,1,20481,0],
+["Brian Cardone","Houston","Texas",0,2,1,20482,1],
+["Reed Dannar","Kingston","Massachusetts",0,2,1,20482,1],
+["Alberto Vargas","Plainfield","",0,2,1,20483,3],
+["Andrew Hales","Wilmington","North Carolina",0,2,1,20483,3],
+["Dan Hammerschmidt","Windsor","Colorado",0,2,1,20483,3],
+["Jim Malena","Stevensville","Maryland",0,4,1,20483,0],
+["Riten (Ron Patel","Memphis, TN","Tennessee",0,2,1,20483,3],
+["Spencer Follese","Robbinsdale, MN","Minnesota",0,2,1,20483,0],
+["joseph bourdon","Allendale","Michigan",0,2,1,20483,0],
+["Tristan Carmony","Rushville","Indiana",0,2,1,20484,2],
+["Bryan Fleming","Sarasota","Florida",0,2,1,20485,1],
+["Nathan Morris","Columbia","Maryland",0,2,1,20485,1],
+["Rory P Connor","Fort Worth","Texas",0,2,1,20485,1],
+["Jack Litman","Nyc","New York",0,2,1,20487,1],
+["Shellby Stowers","cumming","Alabama",0,2,1,20487,1],
+["Courtney Bissett-Hayes","Jacksonville","Florida",0,2,1,20488,1],
+["Dominic Fumo","Indiana multi city or western chicago suburbs","Indiana",0,2,1,20489,1],
+["Jaeyong Song","Irvine","California",0,2,1,20489,1],
+["James Dunphy","Raleigh","North Carolina",0,4,1,20489,1],
+["Jitendra Patel","","",1,3,0,20489,18],
+["Robert patrick","Perryville","Missouri",0,2,1,20489,1],
+["Mark Green","Revere","Massachusetts",0,2,1,20490,3],
+["Dan Powell","Champaign","Illinois",0,2,1,20492,1],
+["Jon Zeidner","Centerport","New York",3,2,1,20496,5],
+["Joshua Hargrove","Midland","Texas",0,2,1,20496,0],
+["matthew iovaldi","eureka","Missouri",1,2,1,20497,4],
+["Anthony Ufkin","St. Louis Park","Minnesota",0,2,1,20498,3],
+["Thomas Nocar","West Ocean City","Maryland",0,2,1,20498,3],
+["Murat Isli","New jersey","New Jersey",0,2,1,20499,2],
+["Tony Kase","Toronto","Ontario",0,4,1,20499,17],
+["Brandon Chiappetta","Whitehouse Station","New Jersey",0,2,1,20500,1],
+["Daniel Koppenol","York","",0,2,1,20500,null],
+["Johan Osorio","Elko","Nevada",0,2,1,20500,1],
+["Kevin Fine","Richmond","Virginia",0,2,1,20500,1],
+["MARY CONROY","Pembroke","Florida",0,2,1,20500,1],
+["Bradley Hartmann","Elkhorn","Wisconsin",0,2,1,20501,0],
+["Cory Howerton","St Augustine","Florida",0,2,1,20501,0],
+["jeff gross","redlands, ca","California",0,2,1,20501,6],
+["Ivan Martinez","Lake Forest","Illinois",0,2,1,20502,5],
+["Sandeep Kothary","DUNWOODY","Georgia",0,2,1,20502,5],
+["Pili Harrison","Brandywine","Maryland",0,2,1,20503,4],
+["Jeremy Evans","Lake St Louis","Missouri",0,2,1,20504,3],
+["Mike Terek","Murrysville","Pennsylvania",0,4,1,20504,3],
+["Kati Huynh","Dallas","Oklahoma",0,2,1,20505,2],
+["Zach Chernick","New York City","New York",0,2,1,20505,2],
+["Adam Weber","Reno","Nevada",0,2,1,20506,1],
+["Kevin Purcell","West Lebanon, NH","New Hampshire",0,2,1,20507,0],
+["Jay Radloff","Bloomfield","",1,2,1,20508,1],
+["Travis Simpson","West Kelowna","",0,2,1,20508,null],
+["anthony zinani","wakeforest","North Carolina",0,2,1,20509,5],
+["Joshua Wood","Paducah","Florida",0,2,1,20510,4],
+["David Sonner","Fort Collins","Colorado",0,2,1,20511,3],
+["Barry Major Jr","Salem","New Hampshire",0,2,1,20512,2],
+["Chandler Keener","Jeromesville","Ohio",0,2,1,20512,2],
+["Michael Walsh","Grosse Pointe","Michigan",0,2,1,20512,2],
+["Richard Moon","Chicago","Illinois",0,2,1,20512,3],
+["Jayesh Shewakramani","Skokie, IL","Illinois",0,2,1,20513,2],
+["Scott Tsanos","Peachtree Corners","Georgia",0,2,1,20513,3],
+["kumiko Oga","hudson","",0,2,1,20513,2],
+["Angela Franey","Berwick, Nova scotia","",0,2,1,20514,null],
+["Ben Bradley","Newburyport, MA","Massachusetts",0,2,1,20514,1],
+["Stephen Selvaggi","wallingford","Connecticut",0,2,1,20514,1],
+["Dean Metzger","Perrysburg","South Carolina",0,2,1,20515,1],
+["Juliana Birelo","01545","Massachusetts",0,2,1,20515,1],
+["Cody Stewart","Bend","",0,2,1,20516,1],
+["Ryan Mello","Dennis","Massachusetts",0,2,1,20516,0],
+["Zachary Brown","Saint Petersburg","Florida",0,2,1,20516,1],
+["Dan Powell","Champaign","Illinois",0,4,1,20517,0],
+["Dave Sonner","Fort Collins","Colorado",0,2,1,20517,0],
+["Scot Domini","Las Vegas","Nevada",0,2,1,20517,1],
+["Don Sturtevant","Meridian","Idaho",0,2,1,20518,0],
+["Daniel Tuttle","Montgomery","Illinois",0,2,1,20519,2],
+["Ewan Bain","Watkinsville GA","Georgia",0,2,1,20519,2],
+["Tim Laing","Windsor","Colorado",0,2,1,20519,2],
+["Milin Shah","JERSEY CITY","New Jersey",0,2,1,20520,1],
+["Rebecca Arnt","Pembroke","New Hampshire",0,2,1,20520,1],
+["Chris Anderson","Sparks","Nevada",0,2,1,20521,1],
+["Rajneet Kaur","ADA","Michigan",0,2,1,20521,1],
+["William Kirk","Leesville","Louisiana",0,2,1,20521,1],
+["Vishnu Reddy","Acton","Massachusetts",0,2,1,20522,0],
+["Matthew Forbes","North Attleboro MA 02760","Massachusetts",0,2,1,20523,0],
+["Patrick Gilroy","Clinton, MA","Massachusetts",0,2,1,20523,0],
+["Robert Dupuis","Bellevue","Nebraska",0,2,1,20523,0],
+["Aaron Gallagher","Watkinsville","Georgia",0,2,1,20524,6],
+["David Keesor","Chapel Hill","North Carolina",2,2,1,20524,6],
+["Alejandro Piekarewicz","Miami","",0,2,1,20525,5],
+["Angelo Leo","Middleport","New York",0,2,1,20527,3],
+["Foulis Peaco","Houston","Texas",0,2,1,20527,3],
+["Paul Nettelbladt","The villages","Florida",0,2,1,20527,3],
+["Justin Kooner","Bakersfield","California",0,2,1,20528,2],
+["ryan safar","san dimas","California",0,2,1,20528,2],
+["David Gravel","Raymond NH","New Hampshire",0,2,1,20529,2],
+["Abe Copeland","Caldwell","Idaho",0,2,1,20530,1],
+["Madan Aheer","Canton","Michigan",2,2,1,20530,1],
+["Paul Cantalupo","Hicksville","New York",0,2,1,20530,1],
+["Jack Westbrook","Aventura","Florida",0,4,1,20531,6],
+["Robert Vollmuth","Mount Juliet","Tennessee",0,2,1,20531,6],
+["Connie Topolinsky","Niagara Falls","Ontario",0,4,1,20532,null],
+["Vincent Parcelli","Rolling Meadows, IL","Illinois",2,2,1,20532,10],
+["Anju Brodbine","Rochester Hills,","Michigan",2,2,1,20533,4],
+["Manouk Mankerian","Marshall","Michigan",0,2,1,20533,4],
+["jordan barnett","siloam springs","Arkansas",0,2,1,20534,3],
+["Johnny Kula","WIndham, NH","New Hampshire",0,2,1,20535,2],
+["Patrick Jags","TBD","Florida",0,2,1,20535,2],
+["Noel Howard","Friendswood","Texas",0,2,1,20536,1],
+["Abe Lincoln","Justin","Texas",0,1,0,20537,0],
+["Christian Valadez","Carrollton","Texas",0,1,0,20537,0],
+["David Meinhardt","California, MD","Maryland",2,2,1,20537,0],
+["Devin Killpatrick","Crowley","Texas",0,1,0,20537,0],
+["Everett Kalkstein","Grand Prairie","Texas",0,1,0,20537,null],
+["Jerry Munoz","Fort Worth","Texas",0,1,0,20537,null],
+["John Hicks","Pantego","Texas",0,1,0,20537,null],
+["Jonathan Baladez","Mesquite","Texas",0,1,0,20537,null],
+["Jonathan Navarro","Carrollton","Texas",0,1,0,20537,null],
+["Logan Zike","Garland","Texas",0,1,0,20537,null],
+["Marty Clarke","Burleson","Texas",0,1,0,20537,null],
+["Matthew Resendez","Fort Worth","Texas",0,1,0,20537,null],
+["Michael Johnson","Propser","Texas",0,1,0,20537,null],
+["Nolan Clarke","Burleson","Texas",0,1,0,20537,null],
+["Ross Girouard","Allen","Texas",0,1,0,20537,null],
+["Thomas Alonzo","Fort Worth","Texas",0,1,0,20537,null],
+["VICTOR CASAS","Wylie","Texas",0,1,0,20537,null],
+["julie kendall","Rockwall","Texas",0,1,0,20537,null],
+["michael coonrod","Melissa","Texas",0,1,0,20537,null],
+["steve koch","Fenton","Michigan",0,2,1,20537,1],
+["thomas roberts","tampa fl","Florida",0,2,1,20537,0],
+["Archi Patel","Toronto","Ontario",2,4,1,20538,11],
+["Preston Erikson","Queen Creek, Arizona","Arizona",0,2,1,20538,4],
+["ANDRE OUELLETTE","CAMLACHIE","",0,2,1,20541,null],
+["Laura Taylor","Bradenton","Florida",2,2,1,20542,0],
+["Mike Yontz","Orlando","Florida",0,2,1,20542,0],
+["Kevin Budde","St. Louis","Missouri",2,2,1,20544,2],
+["Mark Wetherhold","Williamsport, PA","Pennsylvania",0,2,1,20544,2]
+];
+
 // ============================== LIVE (mutable) DATA VIEW ==============================
 // These working variables are what every tab builder reads. They start as clones of the
 // embedded BASE_* data and are recomputed by rebuildAll() whenever data is uploaded/cleared.
 let MONTHS, MONTH_KEYS, ENTITIES, ENTITY_COLORS, LEADS_2025, SPEND_RANGE, SINGLE_YEAR;
 let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, TOTAL_LEADS, CLOSED_DEALS;
 let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
+let FOLLOWUP=[]; // Follow-Up Queue tab: [{name,city,state,status,src,rating,inqDay,respDays}] active leads only
 let STATES=[];      // [{s,r,l,w}] US states with ≥1 lead, sorted by leads desc
 let STATE_META={};  // {usLeads,usWon,nonUsLeads,nonUsCount,blankLeads,total}
 let BUDGET_Q=null;  // Budget Recommendations tab: user-set quarterly budget (survives rebuilds)
@@ -485,6 +1315,21 @@ function aggregateResponse(recs){
 // ---- Derive response-time working var from crmRecords (or restore embedded) ----
 function applyResponse(){
   RESPONSE = crmUploaded ? aggregateResponse([...crmRecords.values()]) : clone(BASE_RESPONSE);
+}
+
+// ---- Derive the active-lead list the Follow-Up Queue tab reads (or restore embedded) ----
+// Active = Lead Status is a live pipeline stage; Dead Lead / Closed Lead- Sold need no follow-up.
+const FU_ACTIVE_STATUS=["Contacted","Nurture","Intro Call","Discovery","FDD Review","Approved"];
+function applyFollowup(){
+  if(crmUploaded){
+    FOLLOWUP=[...crmRecords.values()].filter(r=>FU_ACTIVE_STATUS.includes(r.status)&&r.inqDay!=null)
+      .map(r=>({name:r.name||"(no name)",city:r.city||"",state:r.state||"",status:r.status,
+        src:r.channel,rating:r.rating||"",inqDay:r.inqDay,respDays:r.respDays}));
+  } else {
+    FOLLOWUP=BASE_FOLLOWUP_ROWS.map(a=>({name:a[0],city:a[1],state:a[2],status:FU_STATUS[a[3]],
+      src:FU_SRC[a[4]],rating:FU_RATING[a[5]],inqDay:a[6],respDays:a[7]}));
+  }
+  FOLLOWUP.sort((a,b)=>a.inqDay-b.inqDay||a.name.localeCompare(b.name));
 }
 
 // ============================== FORMAT HELPERS ==============================
@@ -1395,6 +2240,134 @@ function buildResponse(){
     xTickEvery:Math.max(1,Math.ceil(mKeys.length/12))});
 }
 
+// ---- TAB: FOLLOW-UP QUEUE (active leads that were never worked, or worked too late) ----
+// Queue membership = active Lead Status AND first contact never happened or landed >7 days after
+// inquiry. Age ("days since inquiry") is measured against the CURRENT date, not the export date,
+// because an untouched lead keeps aging while the export sits still — that gap is the point.
+const FU_PRIO=[{min:90,cls:"p90",label:"90+ days"},{min:30,cls:"p30",label:"30–90 days"},
+               {min:7,cls:"p7",label:"7–30 days"},{min:-Infinity,cls:"p0",label:"Under 7 days"}];
+const fuBand=d=>FU_PRIO.find(b=>d>=b.min);
+const fuToday=()=>Math.floor(Date.now()/86400000);
+const fuAge=r=>fuToday()-r.inqDay;
+// Late = eventually contacted, but not within the 7-day window. Never = no First Contacted date.
+const fuQueue=()=>FOLLOWUP.filter(r=>r.respDays==null||r.respDays>7);
+let FU_SORT={key:"days",dir:-1};
+function fuSortBy(k){ if(FU_SORT.key===k) FU_SORT.dir*=-1; else FU_SORT={key:k,dir:(k==="days")?-1:1}; renderFuTable(); }
+function renderFuTable(){
+  const tb=document.getElementById("fuTbody"); if(!tb) return;
+  const val={name:r=>r.name, city:r=>r.city||"", state:r=>r.state||"", status:r=>r.status,
+    days:r=>fuAge(r), src:r=>r.src, rating:r=>r.rating||""};
+  const f=val[FU_SORT.key]||val.days;
+  const rows=[...fuQueue()].sort((a,b)=>{const av=f(a),bv=f(b);
+    const c = typeof av==="string" ? av.localeCompare(bv) : av-bv;
+    return FU_SORT.dir*c || (fuAge(b)-fuAge(a)); });
+  tb.innerHTML=rows.map(r=>{ const d=fuAge(r), b=fuBand(d);
+    return `<tr>
+      <td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}">${r.name}</td>
+      <td>${r.city||"—"}</td><td>${r.state||"—"}</td><td>${r.status}</td>
+      <td><span class="pill ${b.cls}">${fmtNum(d)}</span></td>
+      <td>${r.src}</td><td>${r.rating||"—"}</td>
+      <td>${r.respDays==null?'<span class="neg">Never contacted</span>':"contacted day "+fmtNum(r.respDays)}</td>
+    </tr>`; }).join("");
+  document.querySelectorAll("#fuTable th[data-k]").forEach(th=>{
+    const c=th.querySelector(".cS"); if(c) c.textContent = FU_SORT.key===th.dataset.k ? (FU_SORT.dir<0?" ▾":" ▴") : "";
+  });
+}
+const FU_BAND_COLOR={p90:"#ff5252",p30:"#ff8c42",p7:"#ffb020",p0:"#00e676"};
+function buildFollowup(){
+  const p=document.getElementById("tab9");
+  if(!FOLLOWUP.length){ p.innerHTML=`<div class="tab-head"><h2>Follow-Up Queue</h2><p>No active leads in the current CRM data.</p></div>`; return; }
+  const Q=fuQueue();
+  const never=Q.filter(r=>r.respDays==null).sort((a,b)=>a.inqDay-b.inqDay);
+  const late=Q.filter(r=>r.respDays!=null);
+  const ages=Q.map(fuAge);
+  const oldest=never.length?fuAge(never[0]):0;
+  const oldestAny=ages.length?Math.max(...ages):0;
+  const medianAge=ages.length?[...ages].sort((a,b)=>a-b)[Math.floor(ages.length/2)]:0;
+  const dayStr=d=>{const dt=new Date(d*86400000);return MONTH_NAMES[dt.getUTCMonth()]+" "+dt.getUTCDate()+", "+dt.getUTCFullYear();};
+  const asOf=Math.max(...FOLLOWUP.map(r=>r.inqDay));
+
+  // priority band counts
+  const bands=FU_PRIO.map(b=>({...b,n:Q.filter(r=>fuBand(fuAge(r)).cls===b.cls).length}));
+  // status mix within the queue
+  const byStatus=FU_ACTIVE_STATUS.map(s=>({s,n:Q.filter(r=>r.status===s).length})).filter(o=>o.n>0).sort((a,b)=>b.n-a.n);
+  // state breakdown
+  const stMap={};
+  Q.forEach(r=>{const k=r.state||"(no state recorded)"; const o=stMap[k]||(stMap[k]={s:k,n:0,never:0});
+    o.n++; if(r.respDays==null)o.never++;});
+  const stRows=Object.values(stMap).sort((a,b)=>b.n-a.n||a.s.localeCompare(b.s));
+  const stTop=stRows.slice(0,12);
+  const stColor=o=>STATE_TO_REGION[o.s]?REGION_COLORS[STATE_TO_REGION[o.s]]:"#6a6a6a";
+
+  p.innerHTML=`
+   <div class="tab-head"><h2>Follow-Up Queue</h2>
+     <p>Active leads that are still in the pipeline but were never contacted, or were not reached within 7 days of inquiry — the leads a rep should be calling today. Built from <b>Export.xlsx</b>: ${fmtNum(FOLLOWUP.length)} leads whose <b>Lead Status</b> is one of ${FU_ACTIVE_STATUS.join(" · ")}. <b>Dead Lead</b> and <b>Closed Lead- Sold</b> are excluded — they need no follow-up. <b>Days Since Inquiry</b> is measured against today, so it keeps counting while the export sits still.</p></div>
+   <div class="kpis">
+     <div class="kpi bad"><div class="label">Leads Needing Follow-Up</div><div class="val r">${fmtNum(Q.length)}</div><div class="sub">${fmtPct(FOLLOWUP.length?Q.length/FOLLOWUP.length*100:0,1)} of ${fmtNum(FOLLOWUP.length)} active leads</div></div>
+     <div class="kpi warn"><div class="label">Not Contacted Within 7 Days</div><div class="val">${fmtNum(late.length)}</div><div class="sub">reached, but ${late.length?"after "+Math.round(sum(late.map(r=>r.respDays))/late.length)+" days on average":"—"}</div></div>
+     <div class="kpi bad"><div class="label">Never Contacted</div><div class="val r">${fmtNum(never.length)}</div><div class="sub">no First Contacted date on record</div></div>
+     <div class="kpi bad"><div class="label">Oldest Uncontacted Lead</div><div class="val r">${fmtNum(oldest)} days</div><div class="sub">${never.length?"inquired "+dayStr(never[0].inqDay):"—"}</div></div>
+   </div>
+   <div class="grid2">
+     <div class="card"><h3>Queue by Priority</h3><p class="csub">The ${fmtNum(Q.length)} leads needing follow-up, banded by how long ago they inquired</p><div id="fuPrio"></div>
+       <div class="legend">${FU_PRIO.map(b=>`<div class="item"><span class="swatch" style="background:${FU_BAND_COLOR[b.cls]}"></span>${b.label}</div>`).join("")}</div>
+     </div>
+     <div class="card"><h3>Queue by Pipeline Stage</h3><p class="csub">Which active stages the un-worked leads are sitting in</p><div id="fuStatus"></div>
+       <div class="note"><b>Read:</b> The queue is not a pile of cold web forms — <b>${byStatus[0].s}</b> alone holds <b>${fmtNum(byStatus[0].n)}</b> of the ${fmtNum(Q.length)} leads. These are records a rep already classified as live and then stopped working, which is why the median lead here has been waiting <b>${fmtNum(medianAge)} days</b>.</div>
+     </div>
+   </div>
+   <div class="card">
+     <h3>Priority Queue</h3><p class="csub">All ${fmtNum(Q.length)} active leads needing follow-up — click any column header to sort. Color band marks age: <b style="color:#ff5252">90+ days</b> · <b style="color:#ff8c42">30–90</b> · <b style="color:#ffb020">7–30</b> · <b style="color:#00e676">under 7</b></p>
+     <div class="tbl-scroll"><table class="tbl" id="fuTable">
+       <thead><tr>
+         <th data-k="name" onclick="fuSortBy('name')" style="cursor:pointer">Name<span class="cS"></span></th>
+         <th data-k="city" onclick="fuSortBy('city')" style="cursor:pointer">City<span class="cS"></span></th>
+         <th data-k="state" onclick="fuSortBy('state')" style="cursor:pointer">State<span class="cS"></span></th>
+         <th data-k="status" onclick="fuSortBy('status')" style="cursor:pointer">Status<span class="cS"></span></th>
+         <th data-k="days" onclick="fuSortBy('days')" style="cursor:pointer">Days Since Inquiry<span class="cS"></span></th>
+         <th data-k="src" onclick="fuSortBy('src')" style="cursor:pointer">Lead Source<span class="cS"></span></th>
+         <th data-k="rating" onclick="fuSortBy('rating')" style="cursor:pointer">Lead Rating<span class="cS"></span></th>
+         <th>First Contact</th>
+       </tr></thead>
+       <tbody id="fuTbody"></tbody>
+     </table></div>
+     <div class="note">A lead enters this queue when its First Contacted date is blank or lands more than 7 days after Inquiry Date. Latest inquiry anywhere in this export is <b>${dayStr(asOf)}</b>, so every lead here is already at least <b>${fmtNum(Math.min(...ages))} days</b> old${bands[3].n===0?` and the "under 7 days" band is empty — the queue holds no fresh leads, only backlog`:""}.</div>
+   </div>
+   <div class="card">
+     <h3>Never Contacted · ${fmtNum(never.length)} Leads</h3>
+     <p class="csub">Active leads with no First Contacted date at all, oldest inquiry first — these were never worked once</p>
+     <div class="tbl-scroll"><table class="tbl">
+       <thead><tr><th>Name</th><th>City</th><th>State</th><th>Status</th><th>Days Since Inquiry</th><th>Inquiry Date</th><th>Lead Source</th><th>Lead Rating</th></tr></thead>
+       <tbody>${never.map(r=>{const d=fuAge(r),b=fuBand(d);
+         return `<tr><td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}">${r.name}</td>
+         <td>${r.city||"—"}</td><td>${r.state||"—"}</td><td>${r.status}</td>
+         <td><span class="pill ${b.cls}">${fmtNum(d)}</span></td><td>${dayStr(r.inqDay)}</td>
+         <td>${r.src}</td><td>${r.rating||"—"}</td></tr>`;}).join("")}</tbody>
+     </table></div>
+     <div class="note"><b>Read:</b> ${fmtNum(never.length)} leads — ${fmtPct(Q.length?never.length/Q.length*100:0,1)} of the whole queue — carry an active status but no first touch on record. The oldest has been sitting <b>${fmtNum(oldest)} days</b>. Any of these that are recoverable are the cheapest pipeline in the network: the acquisition cost is already sunk.</div>
+   </div>
+   <div class="card">
+     <h3>Follow-Up Backlog by State</h3><p class="csub">Where the ${fmtNum(Q.length)} un-worked leads are concentrated — top ${stTop.length} states, colored by region, with the never-contacted count alongside each bar</p>
+     <div id="fuStates"></div>
+     <div class="tbl-scroll" style="margin-top:16px"><table class="tbl">
+       <thead><tr><th>State</th><th>Needing Follow-Up</th><th>Never Contacted</th><th>% of Queue</th></tr></thead>
+       <tbody>${stRows.map(o=>`<tr><td>${o.s}</td><td>${fmtNum(o.n)}</td><td>${fmtNum(o.never)}</td><td>${fmtPct(o.n/Q.length*100,1)}</td></tr>`).join("")}</tbody>
+     </table></div>
+     <div class="note"><b>Read:</b> <b>${stRows[0].s}</b> tops the backlog with <b>${fmtNum(stRows[0].n)}</b> leads waiting (${fmtNum(stRows[0].never)} never contacted), followed by ${stRows.slice(1,3).map(o=>`<b>${o.s}</b> (${o.n})`).join(" and ")}. The backlog tracks lead volume, so the biggest states carry the biggest queues — but these are also the high-volume, near-zero-conversion states flagged on the Geographic tab. Before reading that as weak demand, note that <b>${fmtNum(stRows[0].n+stRows[1].n)}</b> leads across the top two states alone are still sitting unworked.</div>
+   </div>`;
+
+  catBarChart(document.getElementById("fuPrio"),{
+    cats:bands.map(b=>({label:b.label,full:b.label,value:b.n,color:FU_BAND_COLOR[b.cls]})),
+    yFmt:fmtNum, valLabel:c=>fmtNum(c.value),
+    tipRows:c=>`<div class="tt-row"><span class="k">Leads</span><span class="v">${fmtNum(c.value)}</span></div><div class="tt-row"><span class="k">Share of queue</span><span class="v">${fmtPct(Q.length?c.value/Q.length*100:0,1)}</span></div>`
+  });
+  hBarChart(document.getElementById("fuStatus"),{
+    items:byStatus.map((o,i)=>({name:o.s,value:o.n,color:CHANNEL_COLORS[i%CHANNEL_COLORS.length]})),valFmt:v=>fmtNum(v)});
+  hBarChart(document.getElementById("fuStates"),{
+    items:stTop.map(o=>({name:o.s,value:o.n,color:stColor(o),suffix:` · ${o.never} never`})),valFmt:v=>fmtNum(v)});
+  renderFuTable();
+}
+
 // ---- TAB: SEASONAL PATTERNS ----
 function buildSeasonal(){
   const p=document.getElementById("tab6");
@@ -1804,6 +2777,7 @@ const TABS=[
   {t:"Lead Volume vs Spend",b:buildLeadsSpend},
   {t:"Channel Performance",b:buildChannels},
   {t:"Response Time",b:buildResponse},
+  {t:"Follow-Up Queue",b:buildFollowup},
   {t:"Seasonal Patterns",b:buildSeasonal},
   {t:"Geographic",b:buildGeographic},
   {t:"Cost Per Conversion",b:buildCPC},
@@ -1823,7 +2797,7 @@ function activate(i){
 
 // ============================== REBUILD / RENDER ALL ==============================
 function renderTabs(){ TABS.forEach(tb=>tb.b()); activate(currentTab); }
-function rebuildAll(){ applySpend(); applyLeads(); applyResponse(); renderTabs(); updateHeader(); }
+function rebuildAll(){ applySpend(); applyLeads(); applyResponse(); applyFollowup(); renderTabs(); updateHeader(); }
 
 function updateHeader(){
   // "Data through" = latest spend month; "Leads through" = latest lead year
@@ -2007,7 +2981,7 @@ function statusBucket(s){ s=(s||"").trim();
 // Parse Export.xlsx into deduped records, adding into crmRecords. Returns {added, duplicate, total}.
 function parseCRM(sst, sheetXml){
   let header=null, col={}, added=0, dup=0, seen=0;
-  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date","First Contacted","State / Province"];
+  const want=["Inquiry Date","Email","Lead Status","Lead Reason","Lead Source Category","Lead Source Details","Other Lead Sources","Franchise Awarded Date","First Contacted","State / Province","First Name","Last Name","City","Lead Rating"];
   eachRow(sheetXml,sst,(n,cells)=>{
     if(!header){ header=cells;
       want.forEach(w=>{ for(let i=0;i<header.length;i++){ if(String(header[i]||"").trim()===w){ col[w]=i; break; } } });
@@ -2026,7 +3000,13 @@ function parseCRM(sst, sheetXml){
     const contacted=(respDays!=null); // has a measurable inquiry→first-contact gap
     const rec={
       inqYear:d?d.year:null, inqMonth:d?d.month:null,
-      contacted, respDays,
+      contacted, respDays, inqDay,
+      // raw Lead Status (statusBucket collapses Discovery/FDD Review/Approved into "Other (pipeline)",
+      // but the Follow-Up Queue needs each stage by name)
+      status:String(status||"").trim(),
+      name:[String(cells[col["First Name"]]||"").trim(),String(cells[col["Last Name"]]||"").trim()].filter(Boolean).join(" "),
+      city:String(cells[col["City"]]||"").trim(),
+      rating:String(cells[col["Lead Rating"]]||"").trim(),
       statusBucket:statusBucket(status),
       sold:String(status||"").trim()==="Closed Lead- Sold",
       reasonGroup:groupReason(cells[col["Lead Reason"]]),
