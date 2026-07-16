@@ -207,6 +207,28 @@
   .reco .r p{margin:0;font-size:12.5px;color:var(--muted);line-height:1.55}
   .bench-line{stroke:var(--c3);stroke-width:1.5;stroke-dasharray:5 4}
 
+  /* ---- Best month for closings: 12-month award-date strip + callout ---- */
+  .mon-strip{display:grid;grid-template-columns:repeat(12,1fr);gap:6px;align-items:end;margin-top:4px}
+  .mon{display:flex;flex-direction:column;align-items:center;gap:5px;min-width:0}
+  .mon-v{font-size:12px;font-weight:700;color:var(--text);font-variant-numeric:tabular-nums}
+  .mon-track{width:100%;height:96px;background:var(--surface3);border-radius:6px;display:flex;align-items:flex-end;overflow:hidden}
+  .mon-fill{width:100%;background:var(--c2);border-radius:6px;min-height:2px;opacity:.9}
+  .mon.top .mon-fill{background:var(--green)}
+  .mon.top .mon-v{color:var(--green)}
+  .mon.zero .mon-v{color:var(--dim)}
+  .mon.zero .mon-fill{min-height:0}   /* a month with no closings must show no bar at all */
+  .mon-l{font-size:11px;color:var(--muted)}
+  .mon.top .mon-l{color:var(--green);font-weight:700}
+  .callout{display:flex;align-items:center;gap:16px;margin-top:18px;padding:15px 17px;background:var(--surface2);
+    border:1px solid var(--border);border-left:3px solid var(--green);border-radius:11px}
+  .callout .co-big{font-size:27px;font-weight:800;color:var(--green);line-height:1;flex:none;letter-spacing:-.5px}
+  .callout .co-txt{font-size:12.5px;color:var(--muted);line-height:1.55}
+  .callout .co-txt b{color:var(--text)}
+  @media(max-width:640px){
+    .mon-strip{grid-template-columns:repeat(6,1fr);row-gap:14px}
+    .callout{flex-direction:column;align-items:flex-start;gap:9px}
+  }
+
   /* ---- Geographic choropleth ---- */
   .card-hd{display:flex;align-items:flex-start;justify-content:space-between;gap:16px;flex-wrap:wrap}
   .card-hd .card-hd-t{min-width:0}
@@ -347,6 +369,8 @@ const BASE_LEAD_STATUS={"Dead Lead":2361,"Contacted":390,"Nurture":373,"Intro Ca
 const BASE_LEADS_BY_YEAR={2023:857,2024:1014,2025:1100,2026:221};
 // Closed deals by franchise-award year (Export.xlsx, Franchise Awarded Date)
 const BASE_DEALS_BY_AWARD_YEAR={2023:3,2024:8,2025:5,2026:1};
+// Closed deals by franchise-award calendar month, all years pooled (Export.xlsx, Franchise Awarded Date). Jan→Dec
+const BASE_DEALS_BY_AWARD_MONTH=[0,2,3,5,0,1,1,4,1,0,0,0];
 const BASE_TOTAL_LEADS=3192;
 const BASE_CLOSED_DEALS=17;
 const INDUSTRY_BENCHMARK=2.5; // % conversion
@@ -1231,7 +1255,7 @@ const BASE_FOLLOWUP_ROWS=[
 // These working variables are what every tab builder reads. They start as clones of the
 // embedded BASE_* data and are recomputed by rebuildAll() whenever data is uploaded/cleared.
 let MONTHS, MONTH_KEYS, ENTITIES, ENTITY_COLORS, LEADS_2025, SPEND_RANGE, SINGLE_YEAR;
-let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, TOTAL_LEADS, CLOSED_DEALS;
+let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, DEALS_BY_AWARD_MONTH, TOTAL_LEADS, CLOSED_DEALS;
 let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
 let FOLLOWUP=[]; // Follow-Up Queue tab: [{name,city,state,status,src,rating,inqDay,respDays}] active leads only
 let STATES=[];      // [{s,r,l,w}] US states with ≥1 lead, sorted by leads desc
@@ -1303,7 +1327,7 @@ function applyLeads(){
     // channels
     const chLeads={}, chWon={}, dead={};
     CHANNEL_ORDER.forEach(c=>{chLeads[c]=0;chWon[c]=0;dead[c]={};});
-    LEADS_BY_YEAR={}; DEALS_BY_AWARD_YEAR={}; CLOSED_DEALS=0;
+    LEADS_BY_YEAR={}; DEALS_BY_AWARD_YEAR={}; DEALS_BY_AWARD_MONTH=new Array(12).fill(0); CLOSED_DEALS=0;
     const leadsByKey={};
     recs.forEach(r=>{
       LEAD_STATUS[r.statusBucket]=(LEAD_STATUS[r.statusBucket]||0)+1;
@@ -1312,7 +1336,8 @@ function applyLeads(){
       if(r.inqYear){LEADS_BY_YEAR[r.inqYear]=(LEADS_BY_YEAR[r.inqYear]||0)+1;
         if(r.inqMonth){const k=mkKey(r.inqYear,r.inqMonth);leadsByKey[k]=(leadsByKey[k]||0)+1;}}
       if(r.sold){CLOSED_DEALS++; chWon[r.channel]++;
-        if(r.awardYear)DEALS_BY_AWARD_YEAR[r.awardYear]=(DEALS_BY_AWARD_YEAR[r.awardYear]||0)+1;}
+        if(r.awardYear)DEALS_BY_AWARD_YEAR[r.awardYear]=(DEALS_BY_AWARD_YEAR[r.awardYear]||0)+1;
+        if(r.awardMonth)DEALS_BY_AWARD_MONTH[r.awardMonth-1]++;}
       if(r.statusBucket==="Dead Lead"){const g=r.reasonGroup;dead[r.channel][g]=(dead[r.channel][g]||0)+1;}
     });
     CHANNELS=CHANNEL_ORDER.map(c=>({name:c,leads:chLeads[c]||0,won:chWon[c]||0}));
@@ -1326,6 +1351,7 @@ function applyLeads(){
     DEAD_BY_CHANNEL=clone(BASE_DEAD_BY_CHANNEL);
     LEADS_BY_YEAR=clone(BASE_LEADS_BY_YEAR);
     DEALS_BY_AWARD_YEAR=clone(BASE_DEALS_BY_AWARD_YEAR);
+    DEALS_BY_AWARD_MONTH=clone(BASE_DEALS_BY_AWARD_MONTH);
     TOTAL_LEADS=BASE_TOTAL_LEADS;
     CLOSED_DEALS=BASE_CLOSED_DEALS;
     // map embedded 2025 monthly leads onto the current month axis
@@ -2064,6 +2090,27 @@ function buildCPC(){
   const leads2325=sum([2023,2024,2025].map(y=>LEADS_BY_YEAR[y]));
   const cost3yrPerLead=totalSpend/leads2325;
   const convRate=CLOSED_DEALS/leads2325*100;
+  // ---- Cost per conversion by year: annual Ad & Mktg spend ÷ deals awarded that same year ----
+  // (The headline KPI above divides all 2023–25 spend by all 17 closes; this splits it per year.)
+  const cpcYears=[2023,2024,2025];
+  const cpcSpendY=cpcYears.map(y=>FUND.advertisingMarketing[idx(y)]);
+  const cpcDealsY=cpcYears.map(y=>DEALS_BY_AWARD_YEAR[y]||0);
+  const cpcCostY=cpcYears.map((y,i)=>cpcDealsY[i]?cpcSpendY[i]/cpcDealsY[i]:0);
+  const cpcSeries=[{name:"2023",color:"#3ba7ff"},{name:"2024",color:"#b37feb"},{name:"2025",color:"#00e676"}];
+  // Cost per conversion is lower-is-better: a fall is an improvement, a rise is a regression.
+  const cpcTrend=(a,b)=>{
+    if(!a||!b) return null;
+    const d=(b-a)/a*100, good=d<0;
+    return {d,good,label:good?"Improving":"Worsening",arrow:good?"▼":"▲"};
+  };
+  const cpcSteps=[[0,1],[1,2]].map(([i,j])=>({from:cpcYears[i],to:cpcYears[j],t:cpcTrend(cpcCostY[i],cpcCostY[j])}));
+  // ---- Best month for closings: award dates pooled across all years (small n — 17 deals) ----
+  const awardMon=DEALS_BY_AWARD_MONTH||new Array(12).fill(0);
+  const awardMonTot=sum(awardMon);
+  const monMax=Math.max(...awardMon,1);
+  const bestMon=awardMon.indexOf(monMax);
+  const monRank=awardMon.map((v,i)=>({m:i,v})).sort((a,b)=>b.v-a.v||a.m-b.m).filter(x=>x.v>0);
+  const springShare=awardMonTot?(awardMon[1]+awardMon[2]+awardMon[3])/awardMonTot*100:0;
   p.innerHTML=`
    <div class="tab-head"><h2>Cost Per Conversion</h2>
      <p>Three years of Advertising &amp; Marketing spend (2023–2025) measured against the 17 franchise deals closed, with budget-reallocation guidance grounded in the actual channel performance from Tab&nbsp;4.</p></div>
@@ -2079,6 +2126,40 @@ function buildCPC(){
      <div class="kpi alt"><div class="label">Deals Closed</div><div class="val g">${CLOSED_DEALS}</div><div class="sub">from ${fmtNum(leads2325)} leads</div></div>
      <div class="kpi bad"><div class="label">Cost Per Closed Deal</div><div class="val r">${fmtUSD(costPerDeal)}</div><div class="sub">${fmtUSDfull(costPerDeal)}</div></div>
      <div class="kpi warn"><div class="label">Lead→Deal Conversion</div><div class="val">${fmtPct(convRate,2)}</div><div class="sub">vs 2.5% benchmark</div></div>
+   </div>
+   <div class="card">
+     <h3>Cost Per Conversion by Year</h3>
+     <p class="csub">Marketing spend, deals closed and the resulting cost per conversion for each year. Each cluster is scaled to its own range — bar heights compare years within a metric, not across metrics.</p>
+     <div id="cpcYearBars"></div>
+     <div class="legend">
+       ${cpcSeries.map(s=>`<div class="item"><span class="swatch" style="background:${s.color}"></span>${s.name}</div>`).join("")}
+     </div>
+     <div class="reco" style="margin-top:20px">
+       ${cpcSteps.map(s=>{
+         if(!s.t) return `<div class="r hold"><div class="rt">${s.from} → ${s.to}</div><p>Not enough data to compare.</p></div>`;
+         return `<div class="r ${s.t.good?'up':'down'}">
+           <div class="rt"><span class="tag">${s.t.label}</span>${s.from} → ${s.to}</div>
+           <p style="font-size:19px;font-weight:700;font-variant-numeric:tabular-nums;margin-bottom:3px;color:${s.t.good?'var(--green)':'var(--loss)'}">${s.t.arrow} ${s.t.d>0?'+':''}${s.t.d.toFixed(1)}%</p>
+           <p>Cost per conversion moved from <b>${fmtUSD(cpcCostY[cpcYears.indexOf(s.from)])}</b> to <b>${fmtUSD(cpcCostY[cpcYears.indexOf(s.to)])}</b> per franchise awarded.</p>
+         </div>`;}).join("")}
+     </div>
+     <div class="note"><b>Read:</b> Cost per conversion has improved in both steps — ${fmtUSD(cpcCostY[0])} (${cpcDealsY[0]} deals on ${fmtUSD(cpcSpendY[0])}) → ${fmtUSD(cpcCostY[1])} (${cpcDealsY[1]} deals on ${fmtUSD(cpcSpendY[1])}) → ${fmtUSD(cpcCostY[2])} (${cpcDealsY[2]} deals on ${fmtUSD(cpcSpendY[2])}). The 2023→2024 gain came from closing more deals on roughly flat spend; the 2024→2025 gain came from cutting spend faster than deals fell. Spend is the Advertising &amp; Marketing line for that calendar year and deals are attributed to the franchise-award year, so a lead paid for in one year may close in the next — read each year as a directional efficiency measure, not a strict cohort return.</div>
+   </div>
+   <div class="card">
+     <h3>Best Month for Closings</h3>
+     <p class="csub">All ${awardMonTot} franchise award dates in the CRM pooled by calendar month, 2023–2026</p>
+     <div class="mon-strip">
+       ${awardMon.map((v,i)=>`<div class="mon ${i===bestMon?'top':''}${v===0?' zero':''}">
+         <div class="mon-v">${v}</div>
+         <div class="mon-track"><div class="mon-fill" style="height:${v/monMax*100}%"></div></div>
+         <div class="mon-l">${MONTH_NAMES[i]}</div>
+       </div>`).join("")}
+     </div>
+     <div class="callout">
+       <div class="co-big">${MONTH_NAMES[bestMon]}</div>
+       <div class="co-txt"><b>${MONTH_NAMES[bestMon]} is the single best month for closings</b>, with <b>${monMax} of ${awardMonTot}</b> franchise awards (${fmtPct(monMax/awardMonTot*100,0)}) landing there. ${monRank.length>1?`Next best: ${monRank.slice(1,3).map(x=>`${MONTH_NAMES[x.m]} (${x.v})`).join(" and ")}.`:""} Nothing has ever been awarded in ${awardMon.map((v,i)=>v===0?MONTH_NAMES[i]:null).filter(Boolean).join(", ")}.</div>
+     </div>
+     <div class="note"><b>Read:</b> Closings cluster hard in late winter and spring — <b>Feb–Apr accounts for ${fmtPct(springShare,0)}</b> of every franchise ever awarded, with a secondary bump in August. Working back from a typical months-long sales cycle, that implies pipeline built in Q4 and early Q1 is what converts, so front-loading spend and follow-up ahead of the spring window should matter more than even monthly pacing. <b>Caveat:</b> this is ${awardMonTot} deals total — a single close swings a month by ${fmtPct(1/awardMonTot*100,0)}, so treat it as a directional seasonality signal, not a forecast.</div>
    </div>
    <div class="grid2">
      <div class="card"><h3>Spend vs Deals by Year</h3><p class="csub">Annual Advertising &amp; Marketing spend and franchise deals awarded</p>
@@ -2109,6 +2190,11 @@ function buildCPC(){
      <div class="note"><b>Bottom line:</b> at ${fmtUSD(costPerDeal)} per closed deal the current model is dominated by wasted top-of-funnel spend on channels that convert at 0%. Redirecting budget from Ninja/LinkedIn volume into speed-to-lead follow-up and higher-intent referral sources is the fastest path to lowering cost per conversion.</div>
    </div>`;
   barChart(document.getElementById("cpcSpend"),{labels:["2023","2024","2025"],data:spend2325,color:"#3ba7ff",unit:"Mktg spend",height:220});
+  groupedBar(document.getElementById("cpcYearBars"),{series:cpcSeries,height:300,groups:[
+    {label:"Marketing Spend", fmt:v=>fmtUSD(v),               values:cpcSpendY},
+    {label:"Deals Closed",    fmt:v=>fmtNum(Math.round(v)),   values:cpcDealsY},
+    {label:"Cost / Conversion",fmt:v=>fmtUSD(v),              values:cpcCostY}
+  ]});
   buildFunnelAnim(document.getElementById("cpcFunnelAnim"));
   // funnel
   funnelChart(document.getElementById("funnel"),[
@@ -3260,6 +3346,7 @@ function parseCRM(sst, sheetXml){
       reasonGroup:groupReason(cells[col["Lead Reason"]]),
       channel:classifyChannel(cells[col["Lead Source Category"]],cells[col["Lead Source Details"]],cells[col["Other Lead Sources"]]),
       awardYear:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).year||null,
+      awardMonth:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).month||null,
       state:String(cells[col["State / Province"]]||"").trim()
     };
     if(crmRecords.has(key)) dup++; else added++;
