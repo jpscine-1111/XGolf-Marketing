@@ -140,6 +140,26 @@
   .pill.p7{background:rgba(255,176,32,.16);color:#ffb020}
   .pill.p0{background:rgba(0,230,118,.14);color:#00e676}
   td.prio{border-left:3px solid transparent}
+  /* Follow-Up Queue state accordion (mirrors the Lead Pipeline dashboard's queue) */
+  .qs-wrap{border:1px solid var(--border);border-radius:12px;overflow:hidden;background:var(--surface)}
+  .qs-group{border-bottom:1px solid var(--border)}
+  .qs-group:last-child{border-bottom:none}
+  .qs-hdr{display:flex;align-items:center;gap:10px;padding:11px 14px;cursor:pointer;user-select:none;transition:background .15s}
+  .qs-hdr:hover{background:rgba(255,255,255,.03)}
+  .qs-hdr.open{background:rgba(59,167,255,.05)}
+  .qs-caret{font-size:9px;color:var(--dim);width:12px;flex-shrink:0;transition:transform .18s}
+  .qs-hdr.open .qs-caret{transform:rotate(90deg);color:var(--c2)}
+  .qs-name{font-weight:600;font-size:13px;flex:1;color:var(--text)}
+  .qs-pill{display:inline-block;padding:2px 9px;border-radius:10px;font-size:11px;font-weight:600;margin-left:4px}
+  .qs-pill-tot{background:rgba(59,167,255,.14);color:var(--c2)}
+  .qs-pill-risk{background:rgba(255,82,82,.14);color:var(--loss)}
+  .qs-pill-ok{background:rgba(0,230,118,.1);color:var(--green)}
+  .qs-body{border-top:1px solid var(--border)}
+  .qs-body table.tbl th{position:static;background:var(--surface2)}
+  .qs-pgbar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--dim)}
+  .qs-pgbtn{background:var(--surface3);border:1px solid var(--border2);color:var(--muted);padding:3px 10px;border-radius:4px;font-size:11px;cursor:pointer}
+  .qs-pgbtn:disabled{opacity:.35;cursor:default}
+  .qs-pgbtn:not(:disabled):hover{background:var(--border)}
 
   .note{font-size:11.5px;color:var(--dim);margin-top:14px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6}
   .note b{color:var(--muted)}
@@ -2251,29 +2271,86 @@ const fuToday=()=>Math.floor(Date.now()/86400000);
 const fuAge=r=>fuToday()-r.inqDay;
 // Late = eventually contacted, but not within the 7-day window. Never = no First Contacted date.
 const fuQueue=()=>FOLLOWUP.filter(r=>r.respDays==null||r.respDays>7);
-let FU_SORT={key:"days",dir:-1};
-function fuSortBy(k){ if(FU_SORT.key===k) FU_SORT.dir*=-1; else FU_SORT={key:k,dir:(k==="days")?-1:1}; renderFuTable(); }
-function renderFuTable(){
-  const tb=document.getElementById("fuTbody"); if(!tb) return;
-  const val={name:r=>r.name, city:r=>r.city||"", state:r=>r.state||"", status:r=>r.status,
-    days:r=>fuAge(r), src:r=>r.src, rating:r=>r.rating||""};
-  const f=val[FU_SORT.key]||val.days;
-  const rows=[...fuQueue()].sort((a,b)=>{const av=f(a),bv=f(b);
-    const c = typeof av==="string" ? av.localeCompare(bv) : av-bv;
-    return FU_SORT.dir*c || (fuAge(b)-fuAge(a)); });
-  tb.innerHTML=rows.map(r=>{ const d=fuAge(r), b=fuBand(d);
-    return `<tr>
-      <td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}">${r.name}</td>
-      <td>${r.city||"—"}</td><td>${r.state||"—"}</td><td>${r.status}</td>
-      <td><span class="pill ${b.cls}">${fmtNum(d)}</span></td>
-      <td>${r.src}</td><td>${r.rating||"—"}</td>
-      <td>${r.respDays==null?'<span class="neg">Never contacted</span>':"contacted day "+fmtNum(r.respDays)}</td>
-    </tr>`; }).join("");
-  document.querySelectorAll("#fuTable th[data-k]").forEach(th=>{
-    const c=th.querySelector(".cS"); if(c) c.textContent = FU_SORT.key===th.dataset.k ? (FU_SORT.dir<0?" ▾":" ▴") : "";
-  });
-}
 const FU_BAND_COLOR={p90:"#ff5252",p30:"#ff8c42",p7:"#ffb020",p0:"#00e676"};
+
+// ---- State accordion (same structure as the Lead Pipeline dashboard's Follow-Up Queue) ----
+// One collapsible group per state, ordered most-at-risk first; expanding a state lists its leads
+// oldest-first. Open groups and page positions survive a re-render so a rebuild doesn't collapse
+// everything the user opened.
+const QS_PAGE_SIZE=25;
+const _qOpen=new Set();  // state IDs currently expanded
+const _qPages={};        // current page index per state ID
+let FU_GROUPS=[];
+const qsId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
+// Group the queue by state; leads oldest-first within each, states by most at-risk (90+ days).
+function fuGroups(){
+  const m={};
+  fuQueue().forEach(r=>{ const s=r.state||"(no state recorded)"; (m[s]||(m[s]=[])).push(r); });
+  return Object.entries(m).map(([state,leads])=>{
+    leads.sort((a,b)=>fuAge(b)-fuAge(a)||a.name.localeCompare(b.name));
+    return {state, sid:qsId(state), leads, total:leads.length,
+      atRisk:leads.filter(r=>fuAge(r)>=90).length};
+  }).sort((a,b)=>b.atRisk-a.atRisk||b.total-a.total||a.state.localeCompare(b.state));
+}
+function qsLeadRow(r){
+  const d=fuAge(r), b=fuBand(d);
+  const rowBg = b.cls==="p90"?"background:rgba(255,82,82,.09)"
+    : b.cls==="p30"?"background:rgba(255,140,66,.07)"
+    : b.cls==="p7"?"background:rgba(255,176,32,.05)" : "";
+  return `<tr style="${rowBg}">
+    <td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}"><b>${r.name}</b></td>
+    <td>${r.city||"—"}</td>
+    <td>${r.status}</td>
+    <td style="color:${FU_BAND_COLOR[b.cls]};font-weight:600">${fmtNum(d)}${b.cls==="p90"?" ⚠":""}</td>
+    <td>${r.src}</td>
+    <td>${r.rating||"—"}</td>
+  </tr>`;
+}
+function renderQStatePage(sid,page){
+  const grp=FU_GROUPS.find(g=>g.sid===sid); if(!grp) return;
+  const body=document.getElementById("qsb-"+sid); if(!body) return;
+  _qPages[sid]=page;
+  const total=grp.total, pages=Math.ceil(total/QS_PAGE_SIZE);
+  const slice=grp.leads.slice(page*QS_PAGE_SIZE,(page+1)*QS_PAGE_SIZE);
+  body.innerHTML=`<div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>Name</th><th>City</th><th>Status</th><th>Days Since Inquiry</th><th>Lead Source</th><th>Lead Rating</th></tr></thead>
+      <tbody>${slice.map(qsLeadRow).join("")}</tbody></table></div>`
+    + (total>QS_PAGE_SIZE?`<div class="qs-pgbar">
+        <button class="qs-pgbtn" onclick="renderQStatePage('${sid}',${page-1})" ${page===0?"disabled":""}>← Prev</button>
+        <span>Page ${page+1} of ${pages} · ${fmtNum(total)} leads</span>
+        <button class="qs-pgbtn" onclick="renderQStatePage('${sid}',${page+1})" ${page>=pages-1?"disabled":""}>Next →</button>
+      </div>`:"");
+}
+function toggleQState(sid){
+  const body=document.getElementById("qsb-"+sid), hdr=document.getElementById("qsh-"+sid);
+  if(!body) return;
+  const opening=body.style.display==="none";
+  body.style.display=opening?"block":"none";
+  if(hdr) hdr.classList.toggle("open",opening);
+  if(opening){ _qOpen.add(sid); renderQStatePage(sid,_qPages[sid]||0); }
+  else _qOpen.delete(sid);
+}
+function renderFuAccordion(){
+  const wrap=document.getElementById("fuStatesAcc"); if(!wrap) return;
+  FU_GROUPS=fuGroups();
+  Object.keys(_qPages).forEach(sid=>{ if(!FU_GROUPS.find(g=>g.sid===sid)) delete _qPages[sid]; });
+  if(!FU_GROUPS.length){ wrap.innerHTML=`<div style="text-align:center;color:var(--dim);padding:36px">No leads need follow-up</div>`; return; }
+  wrap.innerHTML=FU_GROUPS.map(g=>{
+    const open=_qOpen.has(g.sid);
+    const risk=g.atRisk>0?`<span class="qs-pill qs-pill-risk">⚠ ${g.atRisk} at risk</span>`
+                         :`<span class="qs-pill qs-pill-ok">✓ all fresh</span>`;
+    return `<div class="qs-group">
+      <div class="qs-hdr${open?" open":""}" id="qsh-${g.sid}" onclick="toggleQState('${g.sid}')">
+        <span class="qs-caret">▶</span>
+        <span class="qs-name">${g.state}</span>
+        <span class="qs-pill qs-pill-tot">${g.total} lead${g.total!==1?"s":""}</span>
+        ${risk}
+      </div>
+      <div class="qs-body" id="qsb-${g.sid}" style="display:${open?"block":"none"}"></div>
+    </div>`;
+  }).join("");
+  FU_GROUPS.forEach(g=>{ if(_qOpen.has(g.sid)) renderQStatePage(g.sid,_qPages[g.sid]||0); });
+}
 function buildFollowup(){
   const p=document.getElementById("tab9");
   if(!FOLLOWUP.length){ p.innerHTML=`<div class="tab-head"><h2>Follow-Up Queue</h2><p>No active leads in the current CRM data.</p></div>`; return; }
@@ -2317,21 +2394,10 @@ function buildFollowup(){
      </div>
    </div>
    <div class="card">
-     <h3>Priority Queue</h3><p class="csub">All ${fmtNum(Q.length)} active leads needing follow-up — click any column header to sort. Color band marks age: <b style="color:#ff5252">90+ days</b> · <b style="color:#ff8c42">30–90</b> · <b style="color:#ffb020">7–30</b> · <b style="color:#00e676">under 7</b></p>
-     <div class="tbl-scroll"><table class="tbl" id="fuTable">
-       <thead><tr>
-         <th data-k="name" onclick="fuSortBy('name')" style="cursor:pointer">Name<span class="cS"></span></th>
-         <th data-k="city" onclick="fuSortBy('city')" style="cursor:pointer">City<span class="cS"></span></th>
-         <th data-k="state" onclick="fuSortBy('state')" style="cursor:pointer">State<span class="cS"></span></th>
-         <th data-k="status" onclick="fuSortBy('status')" style="cursor:pointer">Status<span class="cS"></span></th>
-         <th data-k="days" onclick="fuSortBy('days')" style="cursor:pointer">Days Since Inquiry<span class="cS"></span></th>
-         <th data-k="src" onclick="fuSortBy('src')" style="cursor:pointer">Lead Source<span class="cS"></span></th>
-         <th data-k="rating" onclick="fuSortBy('rating')" style="cursor:pointer">Lead Rating<span class="cS"></span></th>
-         <th>First Contact</th>
-       </tr></thead>
-       <tbody id="fuTbody"></tbody>
-     </table></div>
-     <div class="note">A lead enters this queue when its First Contacted date is blank or lands more than 7 days after Inquiry Date. Latest inquiry anywhere in this export is <b>${dayStr(asOf)}</b>, so every lead here is already at least <b>${fmtNum(Math.min(...ages))} days</b> old${bands[3].n===0?` and the "under 7 days" band is empty — the queue holds no fresh leads, only backlog`:""}.</div>
+     <h3>Priority Queue by State</h3><p class="csub">All ${fmtNum(Q.length)} active leads needing follow-up, grouped by state and ordered most at-risk first — click a state to expand its leads, oldest inquiry first</p>
+     <div class="legend" style="margin:0 0 12px">${FU_PRIO.map(b=>`<div class="item"><span class="swatch" style="background:${FU_BAND_COLOR[b.cls]}"></span>${b.label}${b.cls==="p90"?" ⚠ at risk":""}</div>`).join("")}</div>
+     <div class="qs-wrap" id="fuStatesAcc"></div>
+     <div class="note">A lead enters this queue when its First Contacted date is blank or lands more than 7 days after Inquiry Date. Each state's <b>at risk</b> count is its leads 90+ days past inquiry. Latest inquiry anywhere in this export is <b>${dayStr(asOf)}</b>, so every lead here is already at least <b>${fmtNum(Math.min(...ages))} days</b> old${bands[3].n===0?` and the "under 7 days" band is empty — the queue holds no fresh leads, only backlog`:""}.</div>
    </div>
    <div class="card">
      <h3>Never Contacted · ${fmtNum(never.length)} Leads</h3>
@@ -2365,7 +2431,7 @@ function buildFollowup(){
     items:byStatus.map((o,i)=>({name:o.s,value:o.n,color:CHANNEL_COLORS[i%CHANNEL_COLORS.length]})),valFmt:v=>fmtNum(v)});
   hBarChart(document.getElementById("fuStates"),{
     items:stTop.map(o=>({name:o.s,value:o.n,color:stColor(o),suffix:` · ${o.never} never`})),valFmt:v=>fmtNum(v)});
-  renderFuTable();
+  renderFuAccordion();
 }
 
 // ---- TAB: SEASONAL PATTERNS ----
