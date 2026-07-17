@@ -163,6 +163,8 @@
 
   .note{font-size:11.5px;color:var(--dim);margin-top:14px;padding-top:12px;border-top:1px solid var(--border);line-height:1.6}
   .note b{color:var(--muted)}
+  .note.bad{border-top:none;margin-top:14px;padding:11px 13px;border-left:3px solid var(--loss);background:rgba(255,82,82,.06);border-radius:0 6px 6px 0}
+  .note.bad b{color:var(--loss)}
 
   /* ---- Animated conversion funnel ---- */
   .fnl{max-width:660px;margin:2px auto 0;padding:2px 0}
@@ -438,6 +440,9 @@ const US_STATE_CENTROIDS={"Alabama":[687.3,414.5],"Alaska":[155,497.4],"Arizona"
 // every lead. "Never contacted" = blank First Contacted. Sums/counts are stored raw so the
 // displayed averages match the workbook exactly. Buckets: 0–7, 8–14, 15–30, 31–60, 60+ days.
 const RESPONSE_BUCKETS=["0-7","8-14","15-30","31-60","60+"];
+// Normalize a raw Lead Rating to a RATING_ORDER key (Hot/Warm/Cold, else Unrated) so the
+// speed-to-lead breakdown ties back to total. RATING_ORDER/RATING_COLORS are defined above.
+const ratingKey=r=>{r=(r||"").trim(); return (r==="Hot"||r==="Warm"||r==="Cold")?r:"Unrated";};
 const RESPONSE_BUCKET_LABELS={"0-7":"0–7 days","8-14":"8–14 days","15-30":"15–30 days","31-60":"31–60 days","60+":"60+ days","never":"Never contacted"};
 const RESPONSE_BUCKET_COLORS={"0-7":"#00e676","8-14":"#a3e635","15-30":"#ffb020","31-60":"#ff8c42","60+":"#ff5252","never":"#6a6a6a"};
 const BASE_RESPONSE={
@@ -452,6 +457,12 @@ const BASE_RESPONSE={
     "LinkedIn / Paid Ads":{leads:31,contacted:2,never:29,sumDays:260},
     "List Import":{leads:19,contacted:3,never:16,sumDays:0},
     "Store Referral":{leads:8,contacted:4,never:4,sumDays:0}
+  },
+  byRating:{
+    "Hot":{leads:3066,contacted:2499,never:567,sumDays:15127},
+    "Warm":{leads:1,contacted:0,never:1,sumDays:0},
+    "Cold":{leads:0,contacted:0,never:0,sumDays:0},
+    "Unrated":{leads:125,contacted:83,never:42,sumDays:289}
   },
   monthly:{"2023-04":{total:123,contacted:4,never:119,sumDays:1316},"2023-05":{total:138,contacted:8,never:130,sumDays:494},"2023-06":{total:81,contacted:64,never:17,sumDays:24},"2023-07":{total:85,contacted:82,never:3,sumDays:22},"2023-08":{total:79,contacted:76,never:3,sumDays:0},"2023-09":{total:69,contacted:68,never:1,sumDays:0},"2023-10":{total:74,contacted:70,never:4,sumDays:0},"2023-11":{total:83,contacted:77,never:6,sumDays:0},"2023-12":{total:125,contacted:118,never:7,sumDays:0},"2024-01":{total:254,contacted:241,never:13,sumDays:0},"2024-02":{total:187,contacted:173,never:14,sumDays:1},"2024-03":{total:177,contacted:160,never:17,sumDays:0},"2024-04":{total:31,contacted:25,never:6,sumDays:0},"2024-05":{total:25,contacted:19,never:6,sumDays:0},"2024-06":{total:13,contacted:12,never:1,sumDays:0},"2024-07":{total:23,contacted:22,never:1,sumDays:0},"2024-08":{total:17,contacted:17,never:0,sumDays:0},"2024-09":{total:12,contacted:12,never:0,sumDays:0},"2024-10":{total:89,contacted:78,never:11,sumDays:0},"2024-11":{total:89,contacted:78,never:11,sumDays:0},"2024-12":{total:97,contacted:90,never:7,sumDays:0},"2025-01":{total:175,contacted:166,never:9,sumDays:0},"2025-02":{total:166,contacted:157,never:9,sumDays:0},"2025-03":{total:164,contacted:149,never:15,sumDays:0},"2025-04":{total:103,contacted:96,never:7,sumDays:0},"2025-05":{total:83,contacted:27,never:56,sumDays:2096},"2025-06":{total:56,contacted:32,never:24,sumDays:4363},"2025-07":{total:65,contacted:28,never:37,sumDays:3256},"2025-08":{total:54,contacted:31,never:23,sumDays:2542},"2025-09":{total:49,contacted:48,never:1,sumDays:94},"2025-10":{total:69,contacted:65,never:4,sumDays:111},"2025-11":{total:64,contacted:51,never:13,sumDays:544},"2025-12":{total:52,contacted:47,never:5,sumDays:146},"2026-01":{total:87,contacted:84,never:3,sumDays:163},"2026-02":{total:50,contacted:47,never:3,sumDays:126},"2026-03":{total:82,contacted:58,never:24,sumDays:114},"2026-04":{total:2,contacted:2,never:0,sumDays:4}}
 };
@@ -1403,14 +1414,17 @@ function aggregateResponse(recs){
   const blank=()=>({leads:0,contacted:0,never:0,sumDays:0});
   const agg={total:0,contactedCount:0,contactedSum:0,neverCount:0,within7Count:0,
     convContactedCount:0,convSum:0,deadContactedCount:0,deadSum:0,convTotal:0,deadTotal:0,
-    dist:{}, convByBucket:{}, bySource:{}, monthly:{}};
+    dist:{}, convByBucket:{}, bySource:{}, byRating:{}, monthly:{}};
   [...RESPONSE_BUCKETS,"never"].forEach(b=>{agg.dist[b]=0;agg.convByBucket[b]=0;});
+  RATING_ORDER.forEach(rt=>{agg.byRating[rt]=blank();});
   const bkey=(r)=>{ if(!r.contacted) return "never"; const d=r.respDays;
     return d<=7?"0-7":d<=14?"8-14":d<=30?"15-30":d<=60?"31-60":"60+"; };
   recs.forEach(r=>{
     agg.total++;
     const src=agg.bySource[r.channel]||(agg.bySource[r.channel]=blank());
     src.leads++;
+    const rt=ratingKey(r.rating); const rat=agg.byRating[rt]||(agg.byRating[rt]=blank());
+    rat.leads++;
     if(r.sold)agg.convTotal++; if(r.statusBucket==="Dead Lead")agg.deadTotal++;
     const b=bkey(r); agg.dist[b]=(agg.dist[b]||0)+1; if(r.sold)agg.convByBucket[b]=(agg.convByBucket[b]||0)+1;
     let mo=null;
@@ -1418,11 +1432,12 @@ function aggregateResponse(recs){
     if(r.contacted){
       const d=r.respDays;
       agg.contactedCount++; agg.contactedSum+=d; src.contacted++; src.sumDays+=d;
+      rat.contacted++; rat.sumDays+=d;
       if(d<=7)agg.within7Count++;
       if(r.sold){agg.convContactedCount++;agg.convSum+=d;}
       if(r.statusBucket==="Dead Lead"){agg.deadContactedCount++;agg.deadSum+=d;}
       if(mo){mo.contacted++;mo.sumDays+=d;}
-    } else { agg.neverCount++; src.never++; if(mo)mo.never++; }
+    } else { agg.neverCount++; src.never++; rat.never++; if(mo)mo.never++; }
   });
   return agg;
 }
@@ -2424,6 +2439,29 @@ function buildResponse(){
   const measured=srcRows.filter(r=>r.contacted>=5); // avoid tiny-sample distortion in the callout
   const fastSrc=measured[0], slowSrc=measured[measured.length-1];
 
+  // by-rating rows — is the team reaching higher-rated leads faster? (Hot ▸ Warm ▸ Cold ▸ Unrated)
+  const rateRows=RATING_ORDER.map(rt=>{
+    const b=(R.byRating&&R.byRating[rt])||{leads:0,contacted:0,never:0,sumDays:0};
+    return {key:rt, name:rt, color:RATING_COLORS[rt]||"#6a6a6a",
+      leads:b.leads, contacted:b.contacted, never:b.never,
+      avg:b.contacted?b.sumDays/b.contacted:0, neverPct:b.leads?b.never/b.leads*100:0};
+  });
+  const rHot=rateRows.find(r=>r.key==="Hot");
+  // "Prioritized correctly" = Hot leads reached at least as fast as every other rated tier that has
+  // a real sample (≥5 contacted). Unrated is compared too, since fast-tracking unscored leads over
+  // Hot ones is itself a prioritization miss.
+  const rateCompare=rateRows.filter(r=>r.key!=="Hot"&&r.contacted>=5);
+  const rHotAvg=rHot&&rHot.contacted>=5?rHot.avg:null;
+  const fasterThanHot=rateCompare.filter(r=>rHotAvg!=null&&r.avg<rHotAvg-0.05); // tiers beating Hot on speed
+  const prioritizedOK=rHotAvg!=null&&fasterThanHot.length===0;
+  const hotShare=R.total&&rHot?rHot.leads/R.total*100:0;
+  const rateCallout=(()=>{
+    if(rHotAvg==null) return `<b>Read:</b> Too few Hot leads have a measured first-contact time (fewer than 5 contacted) to judge whether higher-rated leads are prioritized.`;
+    if(prioritizedOK) return `<b>Read:</b> Prioritization looks right — <b>Hot</b> leads are first contacted in <b>${fmtDays(rHot.avg)}</b>, at least as fast as every other rated tier with a measurable sample. The quickest touches are landing on the highest-intent leads, which is exactly the intended behavior.`;
+    const worst=fasterThanHot.slice().sort((a,b)=>a.avg-b.avg)[0];
+    return `<b>Read:</b> Prioritization is <b>inverted</b> — <b>Hot</b> leads wait <b>${fmtDays(rHot.avg)}</b> for first contact, yet <b>${worst.name}</b> leads are reached faster at <b>${fmtDays(worst.avg)}</b>. Higher intent should earn a quicker touch, not a slower one. Compounding this, <b>${fmtPct(hotShare,0)}</b> of all leads are tagged <b>Hot</b>, so the rating field is barely functioning as a triage signal — when nearly every lead is "top priority," none effectively is. Reserve the Hot flag for genuinely high-intent leads and route them to the front of the contact queue.`;
+  })();
+
   // monthly trend
   const mKeys=Object.keys(R.monthly).sort();
   const mLabel=k=>{const [y,m]=k.split("-");return MONTH_NAMES[+m-1]+" '"+y.slice(2);};
@@ -2467,6 +2505,20 @@ function buildResponse(){
      ${fastSrc&&slowSrc?`<div class="note"><b>Read:</b> <b>${fastSrc.name}</b> is the fastest channel to respond at <b>${fmtDays(fastSrc.avg)}</b>, while <b>${slowSrc.name}</b> lags at <b>${fmtDays(slowSrc.avg)}</b>. Averages count only leads that were eventually contacted — channels with high <b>Never %</b> (e.g. leads that were never worked at all) hide an even larger speed problem than the day counts alone suggest.</div>`:""}
    </div>
    <div class="card">
+     <h3>Response Time by Lead Rating</h3><p class="csub">Average days to first contact broken down by Lead Rating — are higher-intent (Hot) leads being reached faster than Warm, Cold, or Unrated leads?</p>
+     <div id="rtRating" style="margin-top:6px"></div>
+     <div class="tbl-scroll" style="margin-top:16px"><table class="tbl">
+       <thead><tr><th>Lead Rating</th><th>Leads</th><th>Contacted</th><th>Never Contacted</th><th>Never %</th><th>Avg Days to Contact</th></tr></thead>
+       <tbody>${rateRows.map(r=>`<tr>
+         <td><span class="chip"><span class="sw" style="background:${r.color}"></span>${r.name}</span></td>
+         <td>${fmtNum(r.leads)}</td><td>${fmtNum(r.contacted)}</td><td>${fmtNum(r.never)}</td>
+         <td class="${r.neverPct>=30?'neg':''}">${r.leads?fmtPct(r.neverPct,1):"—"}</td>
+         <td class="${r.contacted?(r.avg<=7?'pos':'neg'):''}">${r.contacted?fmtDays(r.avg):"—"}</td></tr>`).join("")}
+       </tbody>
+     </table></div>
+     <div class="note ${rHotAvg!=null?(prioritizedOK?'':'bad'):''}">${rateCallout}</div>
+   </div>
+   <div class="card">
      <h3>Monthly Response Time Trend</h3><p class="csub">Average days from inquiry to first contact by inquiry month — is the team getting faster or slower?</p>
      <div id="rtTrend"></div>
      ${slowMonth?`<div class="note"><b>Read:</b> Speed-to-lead is not steady. The slowest cohort was <b>${mLabel(slowMonth.k)}</b> at <b>${fmtDays(slowMonth.avg)}</b> to first contact, versus <b>${fmtDays(recentAvg)}</b> averaged across the three most recent months. Spikes line up with months where a large share of leads went <b>never contacted</b> and the few that were reached were touched late — a backlog signature, not a uniform slowdown.</div>`:""}
@@ -2488,6 +2540,8 @@ function buildResponse(){
   });
   // by source (avg days, horizontal)
   hBarChart(document.getElementById("rtSrc"),{items:srcRows.map(r=>({name:r.name,value:r.avg,color:r.color,suffix:"d"})),valFmt:v=>v.toFixed(1)});
+  // by rating (avg days, horizontal) — only tiers that actually have a contacted sample
+  hBarChart(document.getElementById("rtRating"),{items:rateRows.filter(r=>r.contacted>0).map(r=>({name:r.name,value:r.avg,color:r.color,suffix:"d"})),valFmt:v=>v.toFixed(1)});
   // monthly trend
   lineChart(document.getElementById("rtTrend"),{labels:mKeys.map(mLabel),
     series:[{name:"Avg days to contact",color:"#3ba7ff",data:mAvg}],
