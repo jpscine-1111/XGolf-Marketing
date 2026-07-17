@@ -1487,7 +1487,9 @@ function lineChart(el,{labels,series,yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,di
 }
 
 // ============================== CHART: BARS (single, signed) ==============================
-function barChart(el,{labels,data,color="#00e676",negColor="#ff5252",yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,unit=""}){
+// overlay (optional): {data:[…|null], color, label, barLabel, tipFmt?} draws a trend line
+// on the SAME y-axis as the bars (e.g. a rolling average of the same values) plus a legend.
+function barChart(el,{labels,data,color="#00e676",negColor="#ff5252",yFmt=fmtUSD,tipFmt=fmtUSDfull,height=300,unit="",overlay=null}){
   const W=760,H=height,padL=64,padR=22,padT=18,padB=34;
   const mn=Math.min(0,...data),mx=Math.max(0,...data);
   const {ticks,lo,hi}=niceTicks(mn,mx,5);
@@ -1508,7 +1510,14 @@ function barChart(el,{labels,data,color="#00e676",negColor="#ff5252",yFmt=fmtUSD
     const c=v<0?negColor:color;
     g+=`<rect class="bar" data-i="${i}" x="${X(i)-bw/2}" y="${top}" width="${bw}" height="${Math.max(h,0.5)}" rx="3" fill="${c}" opacity="0.9"/>`;
   });
+  if(overlay){
+    const oc=overlay.color;
+    const pts=overlay.data.map((v,i)=>v==null?null:[X(i),Y(v)]).filter(Boolean);
+    if(pts.length>1)g+=`<polyline fill="none" stroke="${oc}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round" points="${pts.map(p=>p[0].toFixed(1)+','+p[1].toFixed(1)).join(' ')}"/>`;
+    pts.forEach(p=>{g+=`<circle cx="${p[0].toFixed(1)}" cy="${p[1].toFixed(1)}" r="4" fill="${oc}" stroke="var(--bg)" stroke-width="1.5"/>`;});
+  }
   g+='</svg>';
+  if(overlay)g+=`<div class="legend"><span class="item"><span class="swatch" style="background:${color}"></span>${overlay.barLabel}</span><span class="item"><span class="swatch line" style="background:${overlay.color}"></span>${overlay.label}</span></div>`;
   el.innerHTML=g;el.classList.add("chart-wrap");
   const svg=el.querySelector("svg"),tip=attachTip(el);
   svg.querySelectorAll(".bar").forEach(b=>{
@@ -1516,7 +1525,9 @@ function barChart(el,{labels,data,color="#00e676",negColor="#ff5252",yFmt=fmtUSD
     b.addEventListener("mouseleave",()=>{b.setAttribute("opacity","0.9");tip.style.opacity=0;});
     b.addEventListener("mousemove",e=>{
       const i=+b.dataset.i,r=svg.getBoundingClientRect();
-      tip.innerHTML=`<div class="tt-title">${labels[i]}</div><div class="tt-row"><span class="k">${unit||"Value"}</span><span class="v" style="color:${data[i]<0?negColor:color}">${tipFmt(data[i])}</span></div>`;
+      const ov=overlay&&overlay.data[i]!=null?`<div class="tt-row"><span class="k"><span class="sw" style="background:${overlay.color}"></span>${overlay.label}</span><span class="v">${(overlay.tipFmt||tipFmt)(overlay.data[i])}</span></div>`:"";
+      const barK=overlay?`<span class="sw" style="background:${color}"></span>${overlay.barLabel}`:(unit||"Value");
+      tip.innerHTML=`<div class="tt-title">${labels[i]}</div><div class="tt-row"><span class="k">${barK}</span><span class="v" style="color:${data[i]<0?negColor:color}">${tipFmt(data[i])}</span></div>${ov}`;
       tip.style.opacity=1;
       moveTip(tip,el,(e.clientX-r.left)/r.width*el.clientWidth,(e.clientY-r.top)/r.height*el.clientHeight);
     });
@@ -1986,7 +1997,10 @@ function buildLeadsSpend(){
        </div>
      </div>
    </div>`;
-  barChart(document.getElementById("leadBars"),{labels:MONTHS,data:LEADS_2025,color:"#00e676",yFmt:v=>fmtNum(v),tipFmt:v=>fmtNum(v)+" leads",unit:"Leads",height:230});
+  // Rolling 3-month average — smoothed underlying trend; leading months without a full window are left blank.
+  const roll3=LEADS_2025.map((_,i)=>i<2?null:(LEADS_2025[i]+LEADS_2025[i-1]+LEADS_2025[i-2])/3);
+  barChart(document.getElementById("leadBars"),{labels:MONTHS,data:LEADS_2025,color:"#00e676",yFmt:v=>fmtNum(v),tipFmt:v=>fmtNum(v)+" leads",unit:"Leads",height:230,
+    overlay:{data:roll3,color:"#ffb020",label:"3-Month Avg",barLabel:"Monthly Leads",tipFmt:v=>fmtNum(Math.round(v))+" leads"}});
   barChart(document.getElementById("spendBars"),{labels:MONTHS,data:spend,color:"#3ba7ff",unit:"Spend",height:230});
   barChart(document.getElementById("cplBars"),{labels:MONTHS,data:cpl,color:"#b37feb",yFmt:v=>fmtUSDfull(v),tipFmt:v=>fmtUSDfull(v)+" / lead",unit:"Cost / lead",height:250});
   scatterCorr(document.getElementById("corrScatter"),{points:corrPts,slope:corrSlope,intercept:corrInt,xTitle:"Monthly Marketing Spend →",yTitle:"Monthly Lead Volume →",height:410});
