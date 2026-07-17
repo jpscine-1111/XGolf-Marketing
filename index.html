@@ -2652,6 +2652,80 @@ function renderFuAccordion(){
   }).join("");
   FU_GROUPS.forEach(g=>{ if(_qOpen.has(g.sid)) renderQStatePage(g.sid,_qPages[g.sid]||0); });
 }
+
+// ---- Never Contacted accordion (same structure as the Priority Queue above, but never-contacted only) ----
+// One collapsible group per state, ordered oldest-lead-first; expanding a state lists its leads oldest
+// inquiry first. Uses its own open-set / page-map / DOM-id prefix ("nc") so it stays independent of the
+// Priority Queue accordion. Open groups and pages survive a re-render.
+let NC_GROUPS=[];
+const _ncOpen=new Set();  // never-contacted state IDs currently expanded
+const _ncPages={};        // current page index per never-contacted state ID
+// Group never-contacted leads by state; leads oldest-first within each, states by oldest lead first.
+function ncGroups(){
+  const m={};
+  fuQueue().filter(r=>r.respDays==null)
+    .forEach(r=>{ const s=r.state||"(no state recorded)"; (m[s]||(m[s]=[])).push(r); });
+  return Object.entries(m).map(([state,leads])=>{
+    leads.sort((a,b)=>fuAge(b)-fuAge(a)||a.name.localeCompare(b.name));
+    return {state, sid:qsId(state), leads, total:leads.length, oldest:fuAge(leads[0])};
+  }).sort((a,b)=>b.oldest-a.oldest||b.total-a.total||a.state.localeCompare(b.state));
+}
+function ncLeadRow(r){
+  const d=fuAge(r), b=fuBand(d);
+  const rowBg = b.cls==="p90"?"background:rgba(255,82,82,.09)"
+    : b.cls==="p30"?"background:rgba(255,140,66,.07)"
+    : b.cls==="p7"?"background:rgba(255,176,32,.05)" : "";
+  return `<tr style="${rowBg}">
+    <td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}"><b>${r.name}</b></td>
+    <td>${r.city||"—"}</td>
+    <td>${r.status}</td>
+    <td style="color:${FU_BAND_COLOR[b.cls]};font-weight:600">${fmtNum(d)}${b.cls==="p90"?" ⚠":""}</td>
+    <td>${r.src}</td>
+  </tr>`;
+}
+function renderNcStatePage(sid,page){
+  const grp=NC_GROUPS.find(g=>g.sid===sid); if(!grp) return;
+  const body=document.getElementById("ncb-"+sid); if(!body) return;
+  _ncPages[sid]=page;
+  const total=grp.total, pages=Math.ceil(total/QS_PAGE_SIZE);
+  const slice=grp.leads.slice(page*QS_PAGE_SIZE,(page+1)*QS_PAGE_SIZE);
+  body.innerHTML=`<div class="tbl-scroll"><table class="tbl">
+      <thead><tr><th>Name</th><th>City</th><th>Status</th><th>Days Since Inquiry</th><th>Lead Source</th></tr></thead>
+      <tbody>${slice.map(ncLeadRow).join("")}</tbody></table></div>`
+    + (total>QS_PAGE_SIZE?`<div class="qs-pgbar">
+        <button class="qs-pgbtn" onclick="renderNcStatePage('${sid}',${page-1})" ${page===0?"disabled":""}>← Prev</button>
+        <span>Page ${page+1} of ${pages} · ${fmtNum(total)} leads</span>
+        <button class="qs-pgbtn" onclick="renderNcStatePage('${sid}',${page+1})" ${page>=pages-1?"disabled":""}>Next →</button>
+      </div>`:"");
+}
+function toggleNcState(sid){
+  const body=document.getElementById("ncb-"+sid), hdr=document.getElementById("nch-"+sid);
+  if(!body) return;
+  const opening=body.style.display==="none";
+  body.style.display=opening?"block":"none";
+  if(hdr) hdr.classList.toggle("open",opening);
+  if(opening){ _ncOpen.add(sid); renderNcStatePage(sid,_ncPages[sid]||0); }
+  else _ncOpen.delete(sid);
+}
+function renderNcAccordion(){
+  const wrap=document.getElementById("ncStatesAcc"); if(!wrap) return;
+  NC_GROUPS=ncGroups();
+  Object.keys(_ncPages).forEach(sid=>{ if(!NC_GROUPS.find(g=>g.sid===sid)) delete _ncPages[sid]; });
+  if(!NC_GROUPS.length){ wrap.innerHTML=`<div style="text-align:center;color:var(--dim);padding:36px">No never-contacted leads</div>`; return; }
+  wrap.innerHTML=NC_GROUPS.map(g=>{
+    const open=_ncOpen.has(g.sid);
+    return `<div class="qs-group">
+      <div class="qs-hdr${open?" open":""}" id="nch-${g.sid}" onclick="toggleNcState('${g.sid}')">
+        <span class="qs-caret">▶</span>
+        <span class="qs-name">${g.state}</span>
+        <span class="qs-pill qs-pill-tot">${g.total} lead${g.total!==1?"s":""}</span>
+        <span class="qs-pill qs-pill-risk">oldest ${fmtNum(g.oldest)}d</span>
+      </div>
+      <div class="qs-body" id="ncb-${g.sid}" style="display:${open?"block":"none"}"></div>
+    </div>`;
+  }).join("");
+  NC_GROUPS.forEach(g=>{ if(_ncOpen.has(g.sid)) renderNcStatePage(g.sid,_ncPages[g.sid]||0); });
+}
 function buildFollowup(){
   const p=document.getElementById("tab9");
   if(!FOLLOWUP.length){ p.innerHTML=`<div class="tab-head"><h2>Follow-Up Queue</h2><p>No active leads in the current CRM data.</p></div>`; return; }
@@ -2709,15 +2783,9 @@ function buildFollowup(){
    </div>
    <div class="card">
      <h3>Never Contacted · ${fmtNum(never.length)} Leads</h3>
-     <p class="csub">Active leads with no First Contacted date at all, oldest inquiry first — these were never worked once</p>
-     <div class="tbl-scroll"><table class="tbl">
-       <thead><tr><th>Name</th><th>City</th><th>State</th><th>Status</th><th>Days Since Inquiry</th><th>Inquiry Date</th><th>Lead Source</th><th>Lead Rating</th></tr></thead>
-       <tbody>${never.map(r=>{const d=fuAge(r),b=fuBand(d);
-         return `<tr><td class="prio" style="border-left-color:${FU_BAND_COLOR[b.cls]}">${r.name}</td>
-         <td>${r.city||"—"}</td><td>${r.state||"—"}</td><td>${r.status}</td>
-         <td><span class="pill ${b.cls}">${fmtNum(d)}</span></td><td>${dayStr(r.inqDay)}</td>
-         <td>${r.src}</td><td>${r.rating||"—"}</td></tr>`;}).join("")}</tbody>
-     </table></div>
+     <p class="csub">Active leads with no First Contacted date at all, grouped by state and ordered oldest lead first — click a state to expand its leads, oldest inquiry first</p>
+     <div class="legend" style="margin:0 0 12px">${FU_PRIO.map(b=>`<div class="item"><span class="swatch" style="background:${FU_BAND_COLOR[b.cls]}"></span>${b.label}${b.cls==="p90"?" ⚠ at risk":""}</div>`).join("")}</div>
+     <div class="qs-wrap" id="ncStatesAcc"></div>
      <div class="note"><b>Read:</b> ${fmtNum(never.length)} leads — ${fmtPct(Q.length?never.length/Q.length*100:0,1)} of the whole queue — carry an active status but no first touch on record. The oldest has been sitting <b>${fmtNum(oldest)} days</b>. Any of these that are recoverable are the cheapest pipeline in the network: the acquisition cost is already sunk.</div>
    </div>
    <div class="card">
@@ -2740,6 +2808,7 @@ function buildFollowup(){
   hBarChart(document.getElementById("fuStates"),{
     items:stTop.map(o=>({name:o.s,value:o.n,color:stColor(o),suffix:` · ${o.never} never`})),valFmt:v=>fmtNum(v)});
   renderFuAccordion();
+  renderNcAccordion();
 }
 
 // ---- TAB: SEASONAL PATTERNS ----
