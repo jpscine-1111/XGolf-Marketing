@@ -154,6 +154,12 @@
   .qs-pill-tot{background:rgba(59,167,255,.14);color:var(--c2)}
   .qs-pill-risk{background:rgba(255,82,82,.14);color:var(--loss)}
   .qs-pill-ok{background:rgba(0,230,118,.1);color:var(--green)}
+  /* Follow-Up Queue filter bar */
+  .fu-filter{display:flex;align-items:center;gap:9px;flex-wrap:wrap;margin:0 0 14px}
+  .fu-filter label{font-size:12px;font-weight:600;color:var(--muted)}
+  .fu-filter select{background:var(--surface3);border:1px solid var(--border2);color:var(--text);padding:5px 10px;border-radius:6px;font-size:12px;cursor:pointer}
+  .fu-filter select:hover{border-color:var(--c2)}
+  .fu-filter .fu-filter-note{font-size:11.5px;color:var(--dim)}
   .qs-body{border-top:1px solid var(--border)}
   .qs-body table.tbl th{position:static;background:var(--surface2)}
   .qs-pgbar{display:flex;align-items:center;gap:8px;padding:8px 14px;border-top:1px solid var(--border);font-size:11px;color:var(--dim)}
@@ -2570,11 +2576,15 @@ const QS_PAGE_SIZE=25;
 const _qOpen=new Set();  // state IDs currently expanded
 const _qPages={};        // current page index per state ID
 let FU_GROUPS=[];
+let fuRatingFilter="All"; // Lead Rating filter for the state accordion: All|Hot|Warm|Cold|Unrated
 const qsId=s=>s.replace(/[^a-zA-Z0-9]/g,"_");
 // Group the queue by state; leads oldest-first within each, states by most at-risk (90+ days).
+// The Lead Rating dropdown narrows the queue to one rating before grouping, so empty states drop out
+// and each header's lead/at-risk counts reflect only the selected rating.
 function fuGroups(){
   const m={};
-  fuQueue().forEach(r=>{ const s=r.state||"(no state recorded)"; (m[s]||(m[s]=[])).push(r); });
+  fuQueue().filter(r=>fuRatingFilter==="All"||ratingKey(r.rating)===fuRatingFilter)
+    .forEach(r=>{ const s=r.state||"(no state recorded)"; (m[s]||(m[s]=[])).push(r); });
   return Object.entries(m).map(([state,leads])=>{
     leads.sort((a,b)=>fuAge(b)-fuAge(a)||a.name.localeCompare(b.name));
     return {state, sid:qsId(state), leads, total:leads.length,
@@ -2619,11 +2629,13 @@ function toggleQState(sid){
   if(opening){ _qOpen.add(sid); renderQStatePage(sid,_qPages[sid]||0); }
   else _qOpen.delete(sid);
 }
+// Change the Lead Rating filter and re-render just the state accordion (rest of the tab is unchanged).
+function setFuRatingFilter(v){ fuRatingFilter=v; renderFuAccordion(); }
 function renderFuAccordion(){
   const wrap=document.getElementById("fuStatesAcc"); if(!wrap) return;
   FU_GROUPS=fuGroups();
   Object.keys(_qPages).forEach(sid=>{ if(!FU_GROUPS.find(g=>g.sid===sid)) delete _qPages[sid]; });
-  if(!FU_GROUPS.length){ wrap.innerHTML=`<div style="text-align:center;color:var(--dim);padding:36px">No leads need follow-up</div>`; return; }
+  if(!FU_GROUPS.length){ wrap.innerHTML=`<div style="text-align:center;color:var(--dim);padding:36px">No ${fuRatingFilter==="All"?"":fuRatingFilter+"-rated "}leads need follow-up</div>`; return; }
   wrap.innerHTML=FU_GROUPS.map(g=>{
     const open=_qOpen.has(g.sid);
     const risk=g.atRisk>0?`<span class="qs-pill qs-pill-risk">⚠ ${g.atRisk} at risk</span>`
@@ -2684,6 +2696,13 @@ function buildFollowup(){
    </div>
    <div class="card">
      <h3>Priority Queue by State</h3><p class="csub">All ${fmtNum(Q.length)} active leads needing follow-up, grouped by state and ordered most at-risk first — click a state to expand its leads, oldest inquiry first</p>
+     <div class="fu-filter">
+       <label for="fuRatingSel">Lead Rating</label>
+       <select id="fuRatingSel" onchange="setFuRatingFilter(this.value)">
+         ${["All",...RATING_ORDER].map(r=>`<option value="${r}"${r===fuRatingFilter?" selected":""}>${r==="All"?"All ratings":r}</option>`).join("")}
+       </select>
+       <span class="fu-filter-note">Narrows the state list below to the selected rating.</span>
+     </div>
      <div class="legend" style="margin:0 0 12px">${FU_PRIO.map(b=>`<div class="item"><span class="swatch" style="background:${FU_BAND_COLOR[b.cls]}"></span>${b.label}${b.cls==="p90"?" ⚠ at risk":""}</div>`).join("")}</div>
      <div class="qs-wrap" id="fuStatesAcc"></div>
      <div class="note">A lead enters this queue when its First Contacted date is blank or lands more than 7 days after Inquiry Date. Each state's <b>at risk</b> count is its leads 90+ days past inquiry. Latest inquiry anywhere in this export is <b>${dayStr(asOf)}</b>, so every lead here is already at least <b>${fmtNum(Math.min(...ages))} days</b> old${bands[3].n===0?` and the "under 7 days" band is empty — the queue holds no fresh leads, only backlog`:""}.</div>
