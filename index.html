@@ -375,6 +375,33 @@ const BASE_TOTAL_LEADS=3192;
 const BASE_CLOSED_DEALS=17;
 const INDUSTRY_BENCHMARK=2.5; // % conversion
 
+// ---- Lead quality: rating distribution by channel (Export.xlsx, "Lead Rating"; blank -> Unrated) ----
+// Note: in this export the Lead Rating field is almost entirely "Hot" (3,066 of 3,192 leads) with a
+// handful blank and a single "Warm" — there are no "Cold" ratings on file. The segmented bars and the
+// quality score below reflect that reality; Cold segments simply never appear in the current data.
+const RATING_ORDER=["Hot","Warm","Cold","Unrated"];
+const RATING_COLORS={Hot:"#ff5252",Warm:"#ffb020",Cold:"#3ba7ff",Unrated:"#4a4a52"};
+const RATING_WEIGHTS={Hot:100,Warm:60,Cold:20}; // weighted quality score over RATED leads (Unrated excluded)
+const BASE_RATING_BY_CHANNEL={
+  "Website (Direct)":{Hot:2532,Warm:0,Cold:0,Unrated:3},
+  "Web Form (Ninja)":{Hot:514,Warm:0,Cold:0,Unrated:0},
+  "Web Form (Other)":{Hot:7,Warm:0,Cold:0,Unrated:78},
+  "LinkedIn / Paid Ads":{Hot:5,Warm:1,Cold:0,Unrated:25},
+  "List Import":{Hot:0,Warm:0,Cold:0,Unrated:19},
+  "Store Referral":{Hot:8,Warm:0,Cold:0,Unrated:0}
+};
+// ---- Time to conversion: whole days from Inquiry Date to Franchise Awarded Date, per closed-won deal, by channel ----
+// won = closed-sold deals from that channel; days = the subset of those with a valid award date on file
+// (List Import's single win has no Franchise Awarded Date, so it contributes a win but no timing sample).
+const BASE_TTC_BY_CHANNEL={
+  "Website (Direct)":{won:12,days:[78,84,101,104,137,177,193,226,255,261,446,729]},
+  "Web Form (Ninja)":{won:0,days:[]},
+  "Web Form (Other)":{won:4,days:[46,91,117,200]},
+  "LinkedIn / Paid Ads":{won:0,days:[]},
+  "List Import":{won:1,days:[]},
+  "Store Referral":{won:0,days:[]}
+};
+
 // ---- Geographic: leads by U.S. state (Export.xlsx, "State / Province"), sold = Lead Status "Closed Lead- Sold" ----
 // The 5 regions mirror the standard Census-style grouping used across the deck. Canadian provinces and
 // blank-state records are counted separately (BASE_STATE_META) and excluded from the state-level views.
@@ -1256,6 +1283,7 @@ const BASE_FOLLOWUP_ROWS=[
 // embedded BASE_* data and are recomputed by rebuildAll() whenever data is uploaded/cleared.
 let MONTHS, MONTH_KEYS, ENTITIES, ENTITY_COLORS, LEADS_2025, SPEND_RANGE, SINGLE_YEAR;
 let CHANNELS, DEAD_BY_CHANNEL, LEAD_STATUS, LEADS_BY_YEAR, DEALS_BY_AWARD_YEAR, DEALS_BY_AWARD_MONTH, TOTAL_LEADS, CLOSED_DEALS;
+let RATING_BY_CHANNEL, TTC_BY_CHANNEL; // lead-rating distribution & inquiry→award timing, per channel
 let RESPONSE; // response-time aggregate (see BASE_RESPONSE shape)
 let FOLLOWUP=[]; // Follow-Up Queue tab: [{name,city,state,status,src,rating,inqDay,respDays}] active leads only
 let STATES=[];      // [{s,r,l,w}] US states with ≥1 lead, sorted by leads desc
@@ -1325,23 +1353,29 @@ function applyLeads(){
     const statusOrder=["Dead Lead","Contacted","Nurture","Intro Call","Closed — Sold","Other (pipeline)"];
     LEAD_STATUS={}; statusOrder.forEach(s=>LEAD_STATUS[s]=0);
     // channels
-    const chLeads={}, chWon={}, dead={};
-    CHANNEL_ORDER.forEach(c=>{chLeads[c]=0;chWon[c]=0;dead[c]={};});
+    const chLeads={}, chWon={}, dead={}, rating={}, ttc={};
+    const mkRating=()=>({Hot:0,Warm:0,Cold:0,Unrated:0}), mkTtc=()=>({won:0,days:[]});
+    CHANNEL_ORDER.forEach(c=>{chLeads[c]=0;chWon[c]=0;dead[c]={};rating[c]=mkRating();ttc[c]=mkTtc();});
     LEADS_BY_YEAR={}; DEALS_BY_AWARD_YEAR={}; DEALS_BY_AWARD_MONTH=new Array(12).fill(0); CLOSED_DEALS=0;
     const leadsByKey={};
     recs.forEach(r=>{
       LEAD_STATUS[r.statusBucket]=(LEAD_STATUS[r.statusBucket]||0)+1;
-      if(chLeads[r.channel]==null){chLeads[r.channel]=0;chWon[r.channel]=0;dead[r.channel]={};}
+      if(chLeads[r.channel]==null){chLeads[r.channel]=0;chWon[r.channel]=0;dead[r.channel]={};rating[r.channel]=mkRating();ttc[r.channel]=mkTtc();}
       chLeads[r.channel]++;
+      const rt=(r.rating==="Hot"||r.rating==="Warm"||r.rating==="Cold")?r.rating:"Unrated";
+      rating[r.channel][rt]++;
       if(r.inqYear){LEADS_BY_YEAR[r.inqYear]=(LEADS_BY_YEAR[r.inqYear]||0)+1;
         if(r.inqMonth){const k=mkKey(r.inqYear,r.inqMonth);leadsByKey[k]=(leadsByKey[k]||0)+1;}}
-      if(r.sold){CLOSED_DEALS++; chWon[r.channel]++;
+      if(r.sold){CLOSED_DEALS++; chWon[r.channel]++; ttc[r.channel].won++;
+        if(r.awardDay!=null&&r.inqDay!=null&&r.awardDay>=r.inqDay)ttc[r.channel].days.push(r.awardDay-r.inqDay);
         if(r.awardYear)DEALS_BY_AWARD_YEAR[r.awardYear]=(DEALS_BY_AWARD_YEAR[r.awardYear]||0)+1;
         if(r.awardMonth)DEALS_BY_AWARD_MONTH[r.awardMonth-1]++;}
       if(r.statusBucket==="Dead Lead"){const g=r.reasonGroup;dead[r.channel][g]=(dead[r.channel][g]||0)+1;}
     });
     CHANNELS=CHANNEL_ORDER.map(c=>({name:c,leads:chLeads[c]||0,won:chWon[c]||0}));
     DEAD_BY_CHANNEL=dead;
+    RATING_BY_CHANNEL=rating;
+    TTC_BY_CHANNEL=ttc;
     TOTAL_LEADS=recs.length;
     LEADS_2025=MONTH_KEYS.map(k=>leadsByKey[k]||0);
     computeStates(recs);
@@ -1349,6 +1383,8 @@ function applyLeads(){
     LEAD_STATUS=clone(BASE_LEAD_STATUS);
     CHANNELS=clone(BASE_CHANNELS);
     DEAD_BY_CHANNEL=clone(BASE_DEAD_BY_CHANNEL);
+    RATING_BY_CHANNEL=clone(BASE_RATING_BY_CHANNEL);
+    TTC_BY_CHANNEL=clone(BASE_TTC_BY_CHANNEL);
     LEADS_BY_YEAR=clone(BASE_LEADS_BY_YEAR);
     DEALS_BY_AWARD_YEAR=clone(BASE_DEALS_BY_AWARD_YEAR);
     DEALS_BY_AWARD_MONTH=clone(BASE_DEALS_BY_AWARD_MONTH);
@@ -2049,6 +2085,19 @@ function buildChannels(){
    <div class="card">
      <h3>Dead-Lead Reasons by Source</h3><p class="csub">Why leads were lost, per channel — dominant reason is unresponsiveness (a follow-up problem, not only a channel-quality problem)</p>
      <div id="deadRows" style="display:flex;flex-direction:column;gap:16px;margin-top:6px"></div>
+   </div>
+   <div class="card">
+     <h3>Lead Quality Score per Channel</h3>
+     <p class="csub">Lead Rating mix (Export.xlsx) per channel as a segmented bar, with a weighted quality score over rated leads — Hot ${RATING_WEIGHTS.Hot} · Warm ${RATING_WEIGHTS.Warm} · Cold ${RATING_WEIGHTS.Cold}. Blended quality across all rated leads: <b id="qualOverall">—</b>.</p>
+     <div id="qualRows" style="display:flex;flex-direction:column;gap:16px;margin-top:6px"></div>
+     <div class="legend" style="margin-top:14px">${RATING_ORDER.map(k=>`<div class="item"><span class="swatch" style="background:${RATING_COLORS[k]}"></span>${k}</div>`).join("")}</div>
+     <div class="note" id="qualNote"></div>
+   </div>
+   <div class="card">
+     <h3>Time to Conversion by Channel</h3>
+     <p class="csub">Average whole days from Inquiry Date to Franchise Awarded Date for closed-won deals, by source. Blended average across all timed deals: <b id="ttcOverall">—</b>.</p>
+     <div id="ttcRows" style="display:flex;flex-direction:column;gap:14px;margin-top:6px"></div>
+     <div class="note" id="ttcNote"></div>
    </div>`;
   hBarChart(document.getElementById("chVol"),{items:rows.map(c=>({name:c.name,value:c.leads,color:c.color})),valFmt:fmtNum});
   // conversion bar with benchmark line
@@ -2067,6 +2116,59 @@ function buildChannels(){
     dd.appendChild(wrap);
     stackedBar(wrap.querySelector(".sbTarget"),{segments:segs});
   });
+
+  // ---- Lead Quality Score per channel ----
+  const ratedCount=cnts=>(cnts.Hot||0)+(cnts.Warm||0)+(cnts.Cold||0);
+  const qualityScore=cnts=>{const rc=ratedCount(cnts); if(!rc)return null;
+    return ((cnts.Hot||0)*RATING_WEIGHTS.Hot+(cnts.Warm||0)*RATING_WEIGHTS.Warm+(cnts.Cold||0)*RATING_WEIGHTS.Cold)/rc;};
+  const scoreGrade=s=>s==null?{label:"No ratings",cls:"mid"}:s>=80?{label:"High",cls:"good"}:s>=50?{label:"Medium",cls:"mid"}:{label:"Low",cls:"bad"};
+  const qr=document.getElementById("qualRows");
+  let ovHot=0,ovWarm=0,ovCold=0;
+  rows.forEach(c=>{
+    const cnts=RATING_BY_CHANNEL[c.name]||{Hot:0,Warm:0,Cold:0,Unrated:0};
+    const tot=RATING_ORDER.reduce((s,k)=>s+(cnts[k]||0),0);
+    if(tot===0)return;
+    ovHot+=cnts.Hot||0; ovWarm+=cnts.Warm||0; ovCold+=cnts.Cold||0;
+    const rc=ratedCount(cnts), score=qualityScore(cnts), gr=scoreGrade(score);
+    const segs=RATING_ORDER.map(k=>({label:k,value:cnts[k]||0,color:RATING_COLORS[k]}));
+    const scoreTxt=score==null?"n/a":Math.round(score);
+    const wrap=el(`<div><div style="display:flex;justify-content:space-between;align-items:baseline;font-size:12.5px;margin-bottom:6px">
+      <span style="font-weight:600"><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c.color};margin-right:7px"></span>${c.name}</span>
+      <span style="color:var(--dim)">${fmtNum(tot)} leads · ${fmtPct(rc/tot*100,0)} rated · <span class="pill ${gr.cls}">Score ${scoreTxt}</span></span></div><div class="sbTarget"></div>
+      <div style="display:flex;flex-wrap:wrap;gap:12px;margin-top:7px">${segs.filter(s=>s.value>0).map(s=>`<span style="font-size:11px;color:var(--muted)"><span class="sw" style="display:inline-block;width:8px;height:8px;border-radius:2px;background:${s.color};margin-right:5px"></span>${s.label} ${fmtNum(s.value)} (${fmtPct(s.value/tot*100,0)})</span>`).join("")}</div></div>`);
+    qr.appendChild(wrap);
+    stackedBar(wrap.querySelector(".sbTarget"),{segments:segs});
+  });
+  const ovRated=ovHot+ovWarm+ovCold;
+  const ovScore=ovRated?(ovHot*RATING_WEIGHTS.Hot+ovWarm*RATING_WEIGHTS.Warm+ovCold*RATING_WEIGHTS.Cold)/ovRated:null;
+  document.getElementById("qualOverall").textContent=ovScore==null?"n/a":Math.round(ovScore)+" / 100";
+  document.getElementById("qualNote").innerHTML=`<b>Read:</b> The CRM's Lead Rating field is almost entirely <b>Hot</b> (${fmtNum(ovHot)} of ${fmtNum(TOTAL_LEADS)} leads), with ${ovWarm?fmtNum(ovWarm)+" Warm":"no Warm"} and ${ovCold?fmtNum(ovCold)+" Cold":"<b>no Cold</b>"} ratings on file — so the segmented bars separate channels mainly by how many leads got rated at all. <b>Website (Direct)</b>, <b>Web Form (Ninja)</b> and <b>Store Referral</b> are essentially fully rated Hot; <b>Web Form (Other)</b> and <b>List Import</b> are mostly unrated, so their quality scores rest on a thin rated sample.`;
+
+  // ---- Time to Conversion by channel ----
+  const ttcStats=name=>{const t=TTC_BY_CHANNEL[name]||{won:0,days:[]};const d=t.days||[];
+    return {won:t.won||0,n:d.length,avg:d.length?sum(d)/d.length:null,min:d.length?Math.min(...d):null,max:d.length?Math.max(...d):null};};
+  const ttcChannels=rows.filter(c=>ttcStats(c.name).won>0)
+    .map(c=>({name:c.name,color:c.color,...ttcStats(c.name)}))
+    .sort((a,b)=>(a.avg==null)-(b.avg==null)||(a.avg||0)-(b.avg||0));
+  const tr=document.getElementById("ttcRows");
+  const maxAvg=Math.max(...ttcChannels.map(c=>c.avg||0),1);
+  ttcChannels.forEach(c=>{
+    const pct=c.avg==null?0:Math.max(2,c.avg/maxAvg*100);
+    const right=c.avg==null?`<span style="color:var(--dim)">no award date on file</span>`
+      :`<b style="font-variant-numeric:tabular-nums">${Math.round(c.avg)} days</b> <span style="color:var(--dim)">avg`+(c.n>1?` · ${c.min}–${c.max}d range`:"")+`</span>`;
+    const wrap=el(`<div style="display:flex;align-items:center;gap:12px">
+      <div style="width:132px;flex:none;font-size:12.5px;color:var(--muted);text-align:right" title="${c.name}"><span class="sw" style="display:inline-block;width:9px;height:9px;border-radius:2px;background:${c.color};margin-right:6px"></span>${c.name}</div>
+      <div style="flex:1;background:var(--surface3);border-radius:6px;height:22px;position:relative;overflow:hidden">
+        <div style="width:${pct}%;height:100%;background:${c.color};border-radius:6px;min-width:2px;opacity:.9"></div></div>
+      <div style="width:210px;flex:none;font-size:12px">${right} <span style="color:var(--dim)">· ${c.won} deal${c.won===1?"":"s"}${c.n<c.won?` (${c.n} timed)`:""}</span></div>
+    </div>`);
+    tr.appendChild(wrap);
+  });
+  const allDays=ttcChannels.flatMap(c=>{const t=TTC_BY_CHANNEL[c.name];return (t&&t.days)||[];});
+  const ovAvg=allDays.length?sum(allDays)/allDays.length:null;
+  document.getElementById("ttcOverall").textContent=ovAvg==null?"n/a":Math.round(ovAvg)+" days";
+  const timedWon=sum(ttcChannels.map(c=>c.n)), totalWonHere=sum(ttcChannels.map(c=>c.won));
+  document.getElementById("ttcNote").innerHTML=`<b>Read:</b> Across ${timedWon} timed closings the pipeline runs long — a blended <b>${ovAvg==null?"—":Math.round(ovAvg)} days</b> from inquiry to award. <b>Web Form (Other)</b> converts fastest (~${Math.round(ttcStats("Web Form (Other)").avg||0)} days); <b>Website (Direct)</b> deals take roughly twice as long (~${Math.round(ttcStats("Website (Direct)").avg||0)} days) and stretch to ${ttcStats("Website (Direct)").max} days at the tail.${totalWonHere>timedWon?` ${totalWonHere-timedWon} closed deal${totalWonHere-timedWon===1?"":"s"} lack a Franchise Awarded Date and are excluded from the timing average.`:""}`;
 }
 function convChart(el2,rows){
   const W=760,H=300,padL=64,padR=22,padT=18,padB=64;
@@ -3361,6 +3463,7 @@ function parseCRM(sst, sheetXml){
       channel:classifyChannel(cells[col["Lead Source Category"]],cells[col["Lead Source Details"]],cells[col["Other Lead Sources"]]),
       awardYear:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).year||null,
       awardMonth:(parseDateCell(cells[col["Franchise Awarded Date"]])||{}).month||null,
+      awardDay:dateToDayNum(cells[col["Franchise Awarded Date"]]),
       state:String(cells[col["State / Province"]]||"").trim()
     };
     if(crmRecords.has(key)) dup++; else added++;
